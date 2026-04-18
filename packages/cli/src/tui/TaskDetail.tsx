@@ -11,7 +11,13 @@ interface Props {
 	height: number;
 }
 
-export function TaskDetail({ task, onClose, onEdit, width, height }: Props): React.JSX.Element {
+export function TaskDetail({
+	task,
+	onClose,
+	onEdit,
+	width,
+	height,
+}: Props): React.JSX.Element {
 	useInput((input, key) => {
 		if (key.escape || input === "q") onClose();
 		else if (input === "e") onEdit();
@@ -23,43 +29,43 @@ export function TaskDetail({ task, onClose, onEdit, width, height }: Props): Rea
 		<Box
 			flexDirection="column"
 			borderStyle="double"
-			borderColor="cyan"
+			borderColor={theme.borderFocused}
 			width={width}
 			height={height}
 			paddingX={2}
 			paddingY={1}
 		>
 			<Box>
-				<Text bold color="cyan">
+				<Text color={theme.accent} bold>
 					{task.id}
 				</Text>
-				<Text>{"  "}</Text>
-				<Text bold wrap="truncate-end">
+				<Text color={theme.textMuted}>{"  "}</Text>
+				<Text color={theme.text} bold wrap="truncate-end">
 					{task.title}
 				</Text>
 			</Box>
 
 			<Box marginTop={1}>
-				<Text color={colorForStatus(task.status)} bold>
-					{task.status}
+				<Text color={colorForStatus(task.status)}>{task.status}</Text>
+				<Text color={theme.textMuted}>{"  ·  "}</Text>
+				<Text color={theme.textDim}>
+					{task.assignee ? `@${task.assignee}` : "unassigned"}
 				</Text>
-				<Text color={theme.textDim}>{"  ·  "}</Text>
-				<Text>{task.assignee ? `@${task.assignee}` : "unassigned"}</Text>
 				{task.priority ? (
 					<>
-						<Text color={theme.textDim}>{"  ·  "}</Text>
+						<Text color={theme.textMuted}>{"  ·  "}</Text>
 						<Text color={theme.priority[task.priority]}>{`!${task.priority}`}</Text>
 					</>
 				) : null}
 			</Box>
 
 			{task.tags.length > 0 ? (
-				<Text color="cyan" dimColor>
+				<Text color={theme.textDim}>
 					{task.tags.map((t) => `#${t}`).join(" ")}
 				</Text>
 			) : null}
 			{task.depends_on.length > 0 ? (
-				<Text color="blue" dimColor>
+				<Text color={theme.textDim}>
 					depends on: {task.depends_on.join(", ")}
 				</Text>
 			) : null}
@@ -73,19 +79,21 @@ export function TaskDetail({ task, onClose, onEdit, width, height }: Props): Rea
 						width={innerWidth}
 					>
 						{section.heading !== "" ? (
-							<Text bold color="cyan">
-								## {section.heading}
+							<Text color={theme.textDim} bold>
+								{section.heading}
 							</Text>
 						) : null}
 						{section.content.length > 0 ? (
-							<Text wrap="wrap">{section.content}</Text>
+							<Text color={theme.text} wrap="wrap">
+								{section.content}
+							</Text>
 						) : null}
 					</Box>
 				))}
 			</Box>
 
 			<Box marginTop={1}>
-				<Text color={theme.textDim} italic>
+				<Text color={theme.textMuted} italic>
 					e edit · Esc / q close
 				</Text>
 			</Box>

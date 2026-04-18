@@ -305,15 +305,15 @@ export function App(): React.JSX.Element {
 	return (
 		<Box flexDirection="column" width={columns} height={rows}>
 			<Box paddingX={1} width={columns}>
-				<Text bold color="cyan">
+				<Text bold color={theme.text}>
 					ordna
 				</Text>
-				<Text color={theme.textDim}>{`  ${ctx.tasksDir}`}</Text>
+				<Text color={theme.textMuted}>{`  ${ctx.tasksDir}`}</Text>
 				{searchQuery ? (
-					<Text color="yellow">{`   /${searchQuery}`}</Text>
+					<Text color={theme.accent}>{`   /${searchQuery}`}</Text>
 				) : null}
 				<Box flexGrow={1} />
-				{toast ? <Text color="green">{toast}</Text> : null}
+				{toast ? <Text color={theme.textDim}>{toast}</Text> : null}
 			</Box>
 
 			{overlay ? (
@@ -348,7 +348,7 @@ export function App(): React.JSX.Element {
 			)}
 
 			<Box paddingX={1} width={columns}>
-				<Text color={theme.textDim} wrap="truncate-end">
+				<Text color={theme.textMuted} wrap="truncate-end">
 					{grabbedId
 						? `moving ${grabbedId} · ← → to move · space / enter to drop · esc to cancel`
 						: "←/→ cols · ↑/↓ tasks · Space grab · Enter open · c new · m move · a assign · e edit · / find · q quit"}

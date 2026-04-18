@@ -1,5 +1,6 @@
 import { Box, Text, useInput } from "ink";
 import React, { useState } from "react";
+import { theme } from "./theme.js";
 
 interface Props {
 	label: string;
@@ -29,19 +30,36 @@ export function SelectPrompt({
 	});
 
 	return (
-		<Box borderStyle="round" borderColor="cyan" flexDirection="column" paddingX={1}>
-			<Text color="cyan" bold>
+		<Box
+			borderStyle="double"
+			borderColor={theme.borderFocused}
+			flexDirection="column"
+			paddingX={2}
+			paddingY={1}
+		>
+			<Text color={theme.text} bold>
 				{label}
 			</Text>
-			{options.map((opt, i) => (
-				<Text key={opt} color={i === index ? "cyan" : undefined} bold={i === index}>
-					{i === index ? "› " : "  "}
-					{opt}
+			<Box flexDirection="column" marginTop={1}>
+				{options.map((opt, i) => {
+					const active = i === index;
+					return (
+						<Text
+							key={opt}
+							color={active ? theme.accent : theme.textDim}
+							bold={active}
+						>
+							{active ? "› " : "  "}
+							{opt}
+						</Text>
+					);
+				})}
+			</Box>
+			<Box marginTop={1}>
+				<Text color={theme.textMuted} italic>
+					↑/↓ select · Enter confirm · Esc cancel
 				</Text>
-			))}
-			<Text color="gray" dimColor>
-				↑/↓ to select · Enter to confirm · Esc to cancel
-			</Text>
+			</Box>
 		</Box>
 	);
 }

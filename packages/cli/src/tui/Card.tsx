@@ -13,20 +13,27 @@ interface Props {
 
 export function Card({ task, focused, selected, grabbed, width }: Props): React.JSX.Element {
 	const isActive = selected && focused;
-	const marker = grabbed ? "⇄" : selected ? (focused ? "›" : "·") : " ";
+	const marker = grabbed ? "⇄" : isActive ? "›" : " ";
+	const markerColor = grabbed ? theme.grabMarker : theme.selectionMarker;
+	const idColor = grabbed ? theme.grabMarker : isActive ? theme.accent : theme.textDim;
+	const titleColor = grabbed || isActive ? theme.text : theme.textDim;
 	const priorityColor = task.priority ? theme.priority[task.priority] : undefined;
 
 	return (
 		<Box width={width}>
-			<Text inverse={isActive || grabbed} wrap="truncate-end">
-				<Text color={grabbed ? "yellow" : "gray"}>{marker} </Text>
-				<Text color={grabbed ? "yellow" : theme.textAccent} bold>
+			<Text wrap="truncate-end">
+				<Text color={isActive || grabbed ? markerColor : theme.textMuted}>{marker} </Text>
+				<Text color={idColor} bold={isActive || grabbed}>
 					{task.id}
 				</Text>
-				<Text>{"  "}</Text>
-				<Text>{task.title}</Text>
-				{task.priority ? <Text color={priorityColor}>{`  !${task.priority.charAt(0)}`}</Text> : null}
-				{task.assignee ? <Text color="magenta">{`  @${task.assignee}`}</Text> : null}
+				<Text color={theme.textMuted}>{"  "}</Text>
+				<Text color={titleColor}>{task.title}</Text>
+				{task.priority ? (
+					<Text color={priorityColor}>{`  !${task.priority.charAt(0)}`}</Text>
+				) : null}
+				{task.assignee ? (
+					<Text color={theme.textMuted}>{`  @${task.assignee}`}</Text>
+				) : null}
 			</Text>
 		</Box>
 	);
