@@ -1,0 +1,44 @@
+{
+  "name": "@ordna/web",
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./dist/server/start.js",
+  "types": "./dist/server/start.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/server/start.d.ts",
+      "import": "./dist/server/start.js"
+    }
+  },
+  "files": ["dist", "dist-client"],
+  "scripts": {
+    "build": "pnpm build:client && pnpm build:server",
+    "build:server": "tsc -p tsconfig.server.json",
+    "build:client": "vite build",
+    "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.client.json --noEmit",
+    "test": "vitest run",
+    "dev:server": "tsx watch src/server/dev.ts",
+    "dev:client": "vite"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.8",
+    "@hono/node-ws": "^1.0.7",
+    "@ordna/core": "workspace:*",
+    "hono": "^4.6.16"
+  },
+  "devDependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
+    "@types/node": "^22.10.5",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7",
+    "vitest": "^2.1.8"
+  }
+}
