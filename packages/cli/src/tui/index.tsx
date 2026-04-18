@@ -2,7 +2,21 @@ import { render } from "ink";
 import React from "react";
 import { App } from "./App.js";
 
+const ENTER_ALT_SCREEN = "\x1b[?1049h\x1b[H";
+const EXIT_ALT_SCREEN = "\x1b[?1049l";
+
 export async function runBoard(): Promise<void> {
-	const { waitUntilExit } = render(<App />);
-	await waitUntilExit();
+	const useAltScreen = process.stdout.isTTY;
+	if (useAltScreen) process.stdout.write(ENTER_ALT_SCREEN);
+
+	const cleanup = (): void => {
+		if (useAltScreen) process.stdout.write(EXIT_ALT_SCREEN);
+	};
+
+	const { waitUntilExit } = render(<App />, { exitOnCtrlC: true });
+	try {
+		await waitUntilExit();
+	} finally {
+		cleanup();
+	}
 }

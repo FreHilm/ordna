@@ -7,39 +7,27 @@ interface Props {
 	task: Task;
 	focused: boolean;
 	selected: boolean;
+	grabbed?: boolean;
+	width?: number;
 }
 
-export function Card({ task, focused, selected }: Props): React.JSX.Element {
-	const borderColor = selected ? (focused ? theme.borderFocused : "white") : theme.border;
+export function Card({ task, focused, selected, grabbed, width }: Props): React.JSX.Element {
+	const isActive = selected && focused;
+	const marker = grabbed ? "⇄" : selected ? (focused ? "›" : "·") : " ";
 	const priorityColor = task.priority ? theme.priority[task.priority] : undefined;
 
 	return (
-		<Box
-			borderStyle="round"
-			borderColor={borderColor}
-			flexDirection="column"
-			paddingX={1}
-			marginBottom={1}
-		>
-			<Box>
-				<Text color={theme.textAccent} bold>
+		<Box width={width}>
+			<Text inverse={isActive || grabbed} wrap="truncate-end">
+				<Text color={grabbed ? "yellow" : "gray"}>{marker} </Text>
+				<Text color={grabbed ? "yellow" : theme.textAccent} bold>
 					{task.id}
 				</Text>
-				{task.priority ? (
-					<Text color={priorityColor}>{`  !${task.priority}`}</Text>
-				) : null}
-			</Box>
-			<Text wrap="truncate-end">{task.title}</Text>
-			{task.assignee ? (
-				<Text color="magenta" dimColor>
-					@{task.assignee}
-				</Text>
-			) : null}
-			{task.tags.length > 0 ? (
-				<Text color="cyan" dimColor>
-					{task.tags.map((t) => `#${t}`).join(" ")}
-				</Text>
-			) : null}
+				<Text>{"  "}</Text>
+				<Text>{task.title}</Text>
+				{task.priority ? <Text color={priorityColor}>{`  !${task.priority.charAt(0)}`}</Text> : null}
+				{task.assignee ? <Text color="magenta">{`  @${task.assignee}`}</Text> : null}
+			</Text>
 		</Box>
 	);
 }
