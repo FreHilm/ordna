@@ -32,7 +32,7 @@ export function ConfirmDialog({
 	}, [onCancel, onConfirm]);
 
 	return (
-		<div className="modal-backdrop" onClick={onCancel}>
+		<div className="scrim" onClick={onCancel}>
 			<div
 				className="modal confirm-dialog"
 				onClick={(e) => e.stopPropagation()}

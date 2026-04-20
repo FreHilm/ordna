@@ -1,7 +1,9 @@
 import { useDraggable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
-import { useRef } from "react";
+import { useMemo, useRef } from "react";
 import type { WireTask } from "../shared/types.js";
+import { ACCEPTANCE_HEADING_RE, parseAcceptance } from "./acceptance.js";
+import { Avatar, Icon, tagColor } from "./icons.js";
 
 interface Props {
 	task: WireTask;
@@ -43,7 +45,7 @@ function DraggableCard({
 		opacity: isDragging ? 0 : 1,
 	};
 
-	const stopDrag = (e: React.PointerEvent | React.MouseEvent): void => {
+	const stop = (e: React.PointerEvent | React.MouseEvent): void => {
 		e.stopPropagation();
 	};
 
@@ -68,14 +70,14 @@ function DraggableCard({
 			}}
 		>
 			<CardContent task={task} className={`card ${isDragging ? "dragging" : ""}`} />
-			<div className="card-actions" onPointerDown={stopDrag} onMouseDown={stopDrag}>
+			<div className="card-actions" onPointerDown={stop} onMouseDown={stop}>
 				<button
 					type="button"
 					className="card-action"
 					title="Edit"
 					aria-label="Edit task"
 					onClick={(e) => {
-						stopDrag(e);
+						stop(e);
 						onEdit?.(task.id);
 					}}
 				>
@@ -87,7 +89,7 @@ function DraggableCard({
 					title="Delete"
 					aria-label="Delete task"
 					onClick={(e) => {
-						stopDrag(e);
+						stop(e);
 						onDelete?.(task.id);
 					}}
 				>
@@ -98,30 +100,68 @@ function DraggableCard({
 	);
 }
 
-function CardContent({
-	task,
-	className,
-}: {
-	task: WireTask;
-	className: string;
-}): JSX.Element {
+function CardContent({ task, className }: { task: WireTask; className: string }): JSX.Element {
+	const acStats = useMemo(() => {
+		const section = task.sections.find((s) => ACCEPTANCE_HEADING_RE.test(s.heading.trim()));
+		if (!section) return null;
+		const items = parseAcceptance(section.content);
+		if (items.length === 0) return null;
+		const done = items.filter((i) => i.checked).length;
+		return { done, total: items.length };
+	}, [task]);
+
+	const hasBottom = Boolean(task.assignee || acStats);
+
 	return (
 		<div className={className}>
-			<div className="card-head">
+			<div className="card-row">
 				<span className="card-id">{task.id}</span>
 				{task.priority ? (
-					<span className={`card-priority ${task.priority}`}>{task.priority}</span>
+					<span className={`prio-badge ${task.priority}`}>{task.priority}</span>
+				) : null}
+				{task.depends_on.length > 0 ? (
+					<span className="card-deps">
+						<Icon.Link /> {task.depends_on.length}
+					</span>
 				) : null}
 			</div>
+
 			<div className="card-title">{task.title}</div>
-			{task.assignee || task.tags.length > 0 ? (
-				<div className="card-meta">
-					{task.assignee ? <span className="card-assignee">@{task.assignee}</span> : null}
-					{task.tags.map((t) => (
-						<span key={t} className="card-tag">
+
+			{task.tags.length > 0 ? (
+				<div className="card-tags">
+					{task.tags.slice(0, 4).map((t) => (
+						<span key={t} className={`chip ${tagColor(t)}`}>
 							#{t}
 						</span>
 					))}
+				</div>
+			) : null}
+
+			{hasBottom ? (
+				<div className="card-bottom">
+					{task.assignee ? (
+						<span className="card-bottom-item">
+							<Avatar name={task.assignee} size={16} />
+							<span style={{ color: "var(--text-3)" }}>@{task.assignee}</span>
+						</span>
+					) : null}
+					{acStats ? (
+						<span
+							className="card-bottom-item card-bottom-end"
+							style={{ gap: 6 }}
+						>
+							<div className="progress-track" style={{ width: 60 }}>
+								<div
+									className="progress-fill"
+									style={{ width: `${(acStats.done / acStats.total) * 100}%` }}
+								/>
+							</div>
+							<span style={{ fontVariantNumeric: "tabular-nums" }}>
+								{acStats.done}/{acStats.total}
+							</span>
+						</span>
+					) : null}
 				</div>
 			) : null}
 		</div>

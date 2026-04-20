@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { type AcceptanceItem, makeItem } from "./acceptance.js";
+import { Icon } from "./icons.js";
 
 interface Props {
 	items: AcceptanceItem[];
@@ -27,39 +28,35 @@ export function AcceptanceList({ items, onChange }: Props): JSX.Element {
 	};
 
 	return (
-		<div className="ac-list">
-			<div className="ac-list-head">
-				<span className="ac-list-title">Acceptance Criteria</span>
-				<span className="ac-list-count">
-					{total === 0 ? "none" : `${done} / ${total}`}
+		<div className="criteria-block">
+			<div className="crit-head">
+				<span className="section-label" style={{ margin: 0 }}>
+					Acceptance Criteria
+				</span>
+				<span className="crit-count">
+					{total === 0 ? "—" : `${done} / ${total}`}
 				</span>
 			</div>
-
-			{items.length === 0 ? (
-				<div className="ac-list-empty">No criteria yet.</div>
-			) : (
-				<ul className="ac-list-items">
-					{items.map((item, idx) => (
-						<AcceptanceRow
-							key={item.id}
-							item={item}
-							autoFocus={autoFocusId.current === item.id}
-							onToggle={(checked) => update(item.id, { checked })}
-							onChangeText={(text) => update(item.id, { text })}
-							onRemove={() => remove(item.id)}
-							onEnter={() => {
-								const next = makeItem();
-								autoFocusId.current = next.id;
-								const copy = items.slice();
-								copy.splice(idx + 1, 0, next);
-								onChange(copy);
-							}}
-						/>
-					))}
-				</ul>
-			)}
-
-			<button type="button" className="ac-add" onClick={add}>
+			<div>
+				{items.map((item, idx) => (
+					<AcceptanceRow
+						key={item.id}
+						item={item}
+						autoFocus={autoFocusId.current === item.id}
+						onToggle={(checked) => update(item.id, { checked })}
+						onChangeText={(text) => update(item.id, { text })}
+						onRemove={() => remove(item.id)}
+						onEnter={() => {
+							const next = makeItem();
+							autoFocusId.current = next.id;
+							const copy = items.slice();
+							copy.splice(idx + 1, 0, next);
+							onChange(copy);
+						}}
+					/>
+				))}
+			</div>
+			<button type="button" className="crit-add" onClick={add}>
 				+ Add criterion
 			</button>
 		</div>
@@ -90,23 +87,21 @@ function AcceptanceRow({
 	}, [autoFocus]);
 
 	return (
-		<li className={`ac-row ${item.checked ? "checked" : ""}`}>
+		<div className={`crit ${item.checked ? "done" : ""}`}>
 			<button
 				type="button"
 				role="checkbox"
 				aria-checked={item.checked}
-				className={`ac-check ${item.checked ? "on" : ""}`}
+				className={`check ${item.checked ? "on" : ""}`}
 				aria-label={item.checked ? "Mark incomplete" : "Mark complete"}
 				onClick={() => onToggle(!item.checked)}
 			>
-				<svg viewBox="0 0 16 16" aria-hidden="true">
-					<path d="M3.5 8.5 L7 12 L13 5" />
-				</svg>
+				{item.checked ? <Icon.Check /> : null}
 			</button>
 			<input
 				ref={inputRef}
 				type="text"
-				className="ac-input"
+				className="crit-input"
 				value={item.text}
 				placeholder="Describe the criterion…"
 				onChange={(e) => onChangeText(e.target.value)}
@@ -122,13 +117,13 @@ function AcceptanceRow({
 			/>
 			<button
 				type="button"
-				className="ac-remove"
+				className="crit-remove"
 				aria-label="Remove criterion"
 				title="Remove"
 				onClick={onRemove}
 			>
 				×
 			</button>
-		</li>
+		</div>
 	);
 }
