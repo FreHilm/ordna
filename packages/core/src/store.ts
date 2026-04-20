@@ -13,6 +13,13 @@ export interface StoreContext {
 	tasksDir: string;
 }
 
+export const ARCHIVED_STATUS = "archived";
+
+export function isKnownStatus(config: OrdnaConfig, status: string): boolean {
+	if (status === ARCHIVED_STATUS) return true;
+	return config.statuses.includes(status);
+}
+
 export interface ListTasksOptions {
 	status?: string;
 	assignee?: string;
@@ -89,7 +96,7 @@ export async function createTask(
 	const id = nextId(ctx.config, ctx.tasksDir);
 	const status = input.status ?? ctx.config.statuses[0];
 	if (!status) throw new Error("Config has no statuses defined.");
-	if (!ctx.config.statuses.includes(status)) {
+	if (!isKnownStatus(ctx.config, status)) {
 		throw new Error(`Status "${status}" is not in configured statuses.`);
 	}
 
@@ -138,7 +145,7 @@ export async function updateTask(
 		updated_at: today(),
 	};
 
-	if (next.status !== existing.status && !ctx.config.statuses.includes(next.status)) {
+	if (next.status !== existing.status && !isKnownStatus(ctx.config, next.status)) {
 		throw new Error(`Status "${next.status}" is not in configured statuses.`);
 	}
 

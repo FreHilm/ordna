@@ -302,6 +302,7 @@ export function TaskModal({
 												{s}
 											</option>
 										))}
+										<option value="archived">archived</option>
 									</select>
 								</div>
 							) : (

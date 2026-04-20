@@ -6,6 +6,7 @@ import { colorForStatus, theme } from "./theme.js";
 
 interface Props {
 	status: string;
+	statusIndex: number;
 	tasks: Task[];
 	focused: boolean;
 	selectedIndex: number;
@@ -16,6 +17,7 @@ interface Props {
 
 export function Column({
 	status,
+	statusIndex,
 	tasks,
 	focused,
 	selectedIndex,
@@ -23,15 +25,15 @@ export function Column({
 	width,
 	height,
 }: Props): React.JSX.Element {
-	const borderColor = focused ? theme.borderFocused : theme.border;
-	const titleColor = focused ? theme.text : theme.textDim;
+	const borderColor = focused ? theme.accent : theme.border;
+	const statusColor = colorForStatus(status, statusIndex);
 	const innerWidth = Math.max(0, width - 4);
 
 	const titleText = status.toUpperCase();
 	const countText = `(${tasks.length})`;
 	const leadDashes = 2;
-	const labelLen = 1 + titleText.length + 1 + countText.length + 1;
-	const trailDashes = Math.max(0, width - 2 - leadDashes - labelLen);
+	const dotLabelLen = 1 + 1 + 1 + titleText.length + 1 + countText.length + 1;
+	const trailDashes = Math.max(0, width - 2 - leadDashes - dotLabelLen);
 	const titleLineLead = "╔" + "═".repeat(leadDashes) + " ";
 	const titleLineTail = " " + "═".repeat(trailDashes) + "╗";
 
@@ -39,10 +41,12 @@ export function Column({
 		<Box flexDirection="column" width={width} height={height}>
 			<Box width={width}>
 				<Text color={borderColor}>{titleLineLead}</Text>
-				<Text color={titleColor} bold={focused}>
+				<Text color={statusColor}>●</Text>
+				<Text> </Text>
+				<Text color={focused ? theme.text : theme.textDim} bold>
 					{titleText}
 				</Text>
-				<Text color={colorForStatus(status)}>{` ${countText}`}</Text>
+				<Text color={theme.textMuted}>{` ${countText}`}</Text>
 				<Text color={borderColor}>{titleLineTail}</Text>
 			</Box>
 			<Box
@@ -55,7 +59,7 @@ export function Column({
 				paddingX={1}
 			>
 				{tasks.length === 0 ? (
-					<Text color={theme.textMuted} italic>
+					<Text color={theme.textFaint} italic>
 						empty
 					</Text>
 				) : (

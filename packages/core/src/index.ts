@@ -35,10 +35,12 @@ export {
 	priorityEnum,
 } from "./schema.js";
 export {
+	ARCHIVED_STATUS,
 	createContext,
 	createTask,
 	deleteTask,
 	getTask,
+	isKnownStatus,
 	listTasks,
 	moveTask,
 	updateTask,

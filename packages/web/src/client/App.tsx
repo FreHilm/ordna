@@ -21,8 +21,14 @@ import { Icon } from "./icons.js";
 import { TaskModal } from "./TaskModal.js";
 
 type Theme = "dark" | "light";
-type View = { kind: "all" } | { kind: "status"; status: string } | { kind: "tag"; tag: string };
+type View =
+	| { kind: "all" }
+	| { kind: "status"; status: string }
+	| { kind: "tag"; tag: string }
+	| { kind: "archived" };
 type PriorityFilter = "high" | "medium" | "low" | null;
+
+const ARCHIVED_STATUS = "archived";
 
 function groupBy(tasks: WireTask[], statuses: string[]): Record<string, WireTask[]> {
 	const groups: Record<string, WireTask[]> = {};
@@ -147,8 +153,14 @@ export function App(): JSX.Element {
 	const filtered = useMemo<WireTask[]>(() => {
 		const q = query.trim().toLowerCase();
 		return tasks.filter((t) => {
-			if (view.kind === "status" && t.status !== view.status) return false;
-			if (view.kind === "tag" && !t.tags.includes(view.tag)) return false;
+			const isArchived = t.status === ARCHIVED_STATUS;
+			if (view.kind === "archived") {
+				if (!isArchived) return false;
+			} else {
+				if (isArchived) return false;
+				if (view.kind === "status" && t.status !== view.status) return false;
+				if (view.kind === "tag" && !t.tags.includes(view.tag)) return false;
+			}
 			if (priorityFilter && t.priority !== priorityFilter) return false;
 			if (!q) return true;
 			return (
@@ -159,7 +171,11 @@ export function App(): JSX.Element {
 		});
 	}, [tasks, view, priorityFilter, query]);
 
-	const groups = useMemo(() => groupBy(filtered, statuses), [filtered, statuses]);
+	const boardStatuses = view.kind === "archived" ? [ARCHIVED_STATUS] : statuses;
+	const groups = useMemo(
+		() => groupBy(filtered, boardStatuses),
+		[filtered, boardStatuses],
+	);
 	const tagList = useMemo(() => {
 		const counts = new Map<string, number>();
 		for (const t of tasks) for (const tag of t.tags) counts.set(tag, (counts.get(tag) ?? 0) + 1);
@@ -209,12 +225,17 @@ export function App(): JSX.Element {
 		window.setTimeout(() => setToast(null), 2500);
 	};
 
+	const activeTasks = useMemo(
+		() => tasks.filter((t) => t.status !== ARCHIVED_STATUS),
+		[tasks],
+	);
+	const archivedCount = tasks.length - activeTasks.length;
 	const statusCounts = useMemo(() => {
 		const c: Record<string, number> = {};
 		for (const s of statuses) c[s] = 0;
-		for (const t of tasks) c[t.status] = (c[t.status] ?? 0) + 1;
+		for (const t of activeTasks) c[t.status] = (c[t.status] ?? 0) + 1;
 		return c;
-	}, [tasks, statuses]);
+	}, [activeTasks, statuses]);
 
 	const paletteActions: PaletteAction[] = [
 		{ id: "new", label: "New task", hint: "N", icon: "Plus", run: () => setShowCreate(true) },
@@ -298,7 +319,7 @@ export function App(): JSX.Element {
 						onClick={() => setView({ kind: "all" })}
 					>
 						<Icon.Inbox /> All tasks
-						<span className="count">{tasks.length}</span>
+						<span className="count">{activeTasks.length}</span>
 					</button>
 					{statuses.map((s, idx) => (
 						<button
@@ -312,6 +333,15 @@ export function App(): JSX.Element {
 							<span className="count">{statusCounts[s] ?? 0}</span>
 						</button>
 					))}
+					<button
+						type="button"
+						className={`side-item ${view.kind === "archived" ? "active" : ""}`}
+						onClick={() => setView({ kind: "archived" })}
+					>
+						<span className="side-dot col-dot" style={{ background: "var(--text-4)" }} />
+						archived
+						<span className="count">{archivedCount}</span>
+					</button>
 					<div className="side-divider" />
 					<div className="side-head">Priority</div>
 					{(["high", "medium", "low"] as const).map((p) => (
@@ -351,12 +381,14 @@ export function App(): JSX.Element {
 						<h1>
 							{view.kind === "all"
 								? "All tasks"
-								: view.kind === "status"
-									? view.status
-									: `#${view.tag}`}
+								: view.kind === "archived"
+									? "Archived"
+									: view.kind === "status"
+										? view.status
+										: `#${view.tag}`}
 						</h1>
 						<span className="meta">
-							· {filtered.length} visible · {tasks.length} total
+							· {filtered.length} visible · {activeTasks.length} total
 						</span>
 						<div className="subbar-spacer" />
 						{priorityFilter ? (
@@ -373,11 +405,11 @@ export function App(): JSX.Element {
 
 					<DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
 						<div className="board">
-							{statuses.map((status, idx) => (
+							{(view.kind === "archived" ? [ARCHIVED_STATUS] : statuses).map((status, idx) => (
 								<Column
 									key={status}
 									status={status}
-									color={colorForStatus(status, idx)}
+									color={view.kind === "archived" ? "slate" : colorForStatus(status, idx)}
 									tasks={groups[status] ?? []}
 									onSelect={(id) => {
 										setOpenTaskId(id);
