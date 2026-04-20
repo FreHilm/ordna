@@ -7,9 +7,12 @@ import { colorForStatus, theme } from "./theme.js";
 interface Props {
 	status: string;
 	statusIndex: number;
-	tasks: Task[];
+	visibleTasks: Task[];
+	totalTasks: number;
+	aboveCount: number;
+	belowCount: number;
 	focused: boolean;
-	selectedIndex: number;
+	selectedRelativeIndex: number;
 	grabbedId: string | null;
 	width: number;
 	height: number;
@@ -18,9 +21,12 @@ interface Props {
 export function Column({
 	status,
 	statusIndex,
-	tasks,
+	visibleTasks,
+	totalTasks,
+	aboveCount,
+	belowCount,
 	focused,
-	selectedIndex,
+	selectedRelativeIndex,
 	grabbedId,
 	width,
 	height,
@@ -30,7 +36,7 @@ export function Column({
 	const innerWidth = Math.max(0, width - 4);
 
 	const titleText = status.toUpperCase();
-	const countText = `(${tasks.length})`;
+	const countText = `(${totalTasks})`;
 	const leadDashes = 2;
 	const dotLabelLen = 1 + 1 + 1 + titleText.length + 1 + countText.length + 1;
 	const trailDashes = Math.max(0, width - 2 - leadDashes - dotLabelLen);
@@ -58,22 +64,34 @@ export function Column({
 				borderTop={false}
 				paddingX={1}
 			>
-				{tasks.length === 0 ? (
+				{aboveCount > 0 ? (
+					<Text color={theme.textMuted} italic wrap="truncate-end">
+						↑ {aboveCount} more
+					</Text>
+				) : null}
+
+				{totalTasks === 0 ? (
 					<Text color={theme.textFaint} italic>
 						empty
 					</Text>
 				) : (
-					tasks.map((task, index) => (
+					visibleTasks.map((task, index) => (
 						<Card
 							key={task.id}
 							task={task}
 							focused={focused}
-							selected={focused && index === selectedIndex}
+							selected={focused && index === selectedRelativeIndex}
 							grabbed={grabbedId === task.id}
 							width={innerWidth}
 						/>
 					))
 				)}
+
+				{belowCount > 0 ? (
+					<Text color={theme.textMuted} italic wrap="truncate-end">
+						↓ {belowCount} more
+					</Text>
+				) : null}
 			</Box>
 		</Box>
 	);

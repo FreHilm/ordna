@@ -70,6 +70,7 @@ export function App(): React.JSX.Element {
 	const [filter, setFilter] = useState<SidebarItem>({ kind: "all" });
 	const [focus, setFocus] = useState<Focus>("board");
 	const [sidebarFocusedKey, setSidebarFocusedKey] = useState<string | null>(null);
+	const [scrollOffsets, setScrollOffsets] = useState<Record<string, number>>({});
 
 	const statuses = ctx.config.statuses;
 
@@ -179,7 +180,9 @@ export function App(): React.JSX.Element {
 			const fresh = await listTasks(ctx);
 			const group = fresh.filter((t) => t.status === targetStatus);
 			const nextIdx = group.findIndex((t) => t.id === grabbedId);
-			setRowIndex(Math.max(0, nextIdx));
+			const clampedIdx = Math.max(0, nextIdx);
+			setRowIndex(clampedIdx);
+			ensureRowVisible(targetStatus, clampedIdx, group);
 		} catch (error) {
 			flashToast((error as Error).message);
 		}
@@ -279,9 +282,13 @@ export function App(): React.JSX.Element {
 				setColumnIndex((i) => Math.min(boardStatuses.length - 1, i + 1));
 				setRowIndex(0);
 			} else if (key.upArrow || input === "k") {
-				setRowIndex((i) => Math.max(0, i - 1));
+				const nextRow = Math.max(0, rowIndex - 1);
+				setRowIndex(nextRow);
+				ensureRowVisible(activeStatus, nextRow, activeColumn);
 			} else if (key.downArrow || input === "j") {
-				setRowIndex((i) => Math.min(Math.max(0, activeColumn.length - 1), i + 1));
+				const nextRow = Math.min(Math.max(0, activeColumn.length - 1), rowIndex + 1);
+				setRowIndex(nextRow);
+				ensureRowVisible(activeStatus, nextRow, activeColumn);
 			} else if (input === " " && selectedTask) {
 				setGrabbedId(selectedTask.id);
 				flashToast(`Grabbed ${selectedTask.id} — ← → to move, space to drop`);
@@ -323,6 +330,15 @@ export function App(): React.JSX.Element {
 			await moveTask(mode.task.id, targetStatus, ctx);
 			flashToast(`${mode.task.id} → ${targetStatus}`);
 			await reload();
+			const fresh = await listTasks(ctx);
+			const group = fresh.filter((t) => t.status === targetStatus);
+			const nextIdx = group.findIndex((t) => t.id === mode.task.id);
+			if (nextIdx >= 0) {
+				const targetColIdx = boardStatuses.indexOf(targetStatus);
+				if (targetColIdx >= 0) setColumnIndex(targetColIdx);
+				setRowIndex(nextIdx);
+				ensureRowVisible(targetStatus, nextIdx, group);
+			}
 		} catch (error) {
 			flashToast((error as Error).message);
 		}
@@ -356,24 +372,87 @@ export function App(): React.JSX.Element {
 	const colCount = Math.max(1, boardStatuses.length);
 	const colWidth = Math.max(24, Math.floor(boardAreaWidth / colCount));
 
+	// Each column body has (boardHeight - 2) usable rows after title + bottom border.
+	const columnBodyLines = Math.max(1, boardHeight - 2);
+
+	const columnLayout = useCallback(
+		(status: string, all: Task[]) => {
+			const total = all.length;
+			const needsScroll = total > columnBodyLines;
+			// Reserve 1 row top + 1 row bottom for scroll indicators when needed.
+			const visibleCount = needsScroll
+				? Math.max(1, columnBodyLines - 2)
+				: columnBodyLines;
+			const maxOffset = Math.max(0, total - visibleCount);
+			const storedOffset = scrollOffsets[status] ?? 0;
+			const offset = Math.max(0, Math.min(maxOffset, storedOffset));
+			const visible = all.slice(offset, offset + visibleCount);
+			return {
+				visible,
+				offset,
+				visibleCount,
+				aboveCount: offset,
+				belowCount: Math.max(0, total - offset - visibleCount),
+				total,
+			};
+		},
+		[columnBodyLines, scrollOffsets],
+	);
+
+	const ensureRowVisible = useCallback(
+		(status: string, nextRow: number, all: Task[]): void => {
+			const total = all.length;
+			const needsScroll = total > columnBodyLines;
+			const visibleCount = needsScroll
+				? Math.max(1, columnBodyLines - 2)
+				: columnBodyLines;
+			setScrollOffsets((prev) => {
+				const cur = prev[status] ?? 0;
+				let next = cur;
+				if (nextRow < cur) next = nextRow;
+				else if (nextRow >= cur + visibleCount) next = nextRow - visibleCount + 1;
+				const maxOffset = Math.max(0, total - visibleCount);
+				next = Math.max(0, Math.min(maxOffset, next));
+				if (next === cur) return prev;
+				return { ...prev, [status]: next };
+			});
+		},
+		[columnBodyLines],
+	);
+
 	const popupWidth = Math.min(boardAreaWidth - 4, Math.max(40, Math.floor(boardAreaWidth * 0.75)));
 	const popupHeight = Math.min(boardHeight - 2, Math.max(10, Math.floor(boardHeight * 0.85)));
 
 	const renderBoard = (): React.JSX.Element => (
 		<Box flexDirection="row" height={boardHeight} width={boardAreaWidth}>
-			{boardStatuses.map((s, idx) => (
-				<Column
-					key={s}
-					status={s}
-					statusIndex={statuses.indexOf(s) >= 0 ? statuses.indexOf(s) : idx}
-					tasks={groups.get(s) ?? []}
-					focused={idx === columnIndex && mode.kind === "browse" && focus === "board"}
-					selectedIndex={idx === columnIndex ? rowIndex : -1}
-					grabbedId={grabbedId}
-					width={idx === boardStatuses.length - 1 ? boardAreaWidth - colWidth * (boardStatuses.length - 1) : colWidth}
-					height={boardHeight}
-				/>
-			))}
+			{boardStatuses.map((s, idx) => {
+				const all = groups.get(s) ?? [];
+				const layout = columnLayout(s, all);
+				const isFocusedCol = idx === columnIndex && mode.kind === "browse" && focus === "board";
+				const selectedRelativeIndex = isFocusedCol
+					? rowIndex - layout.offset
+					: -1;
+				return (
+					<Column
+						key={s}
+						status={s}
+						statusIndex={statuses.indexOf(s) >= 0 ? statuses.indexOf(s) : idx}
+						visibleTasks={layout.visible}
+						totalTasks={layout.total}
+						aboveCount={layout.aboveCount}
+						belowCount={layout.belowCount}
+						focused={isFocusedCol}
+						selectedRelativeIndex={selectedRelativeIndex}
+						grabbedId={grabbedId}
+						width={
+							idx === boardStatuses.length - 1
+								? boardAreaWidth - colWidth * (boardStatuses.length - 1)
+								: colWidth
+						}
+						height={boardHeight}
+					/>
+				);
+			})}
 		</Box>
 	);
 
