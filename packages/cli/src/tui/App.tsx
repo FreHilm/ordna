@@ -426,11 +426,36 @@ export function App(): React.JSX.Element {
 
 	const overlay = renderOverlay();
 	const showDetail = mode.kind === "detail";
-	const footerHint = focus === "sidebar"
-		? "Tab board · ↑/↓ select · Enter apply · Esc back"
-		: grabbedId
-			? `moving ${grabbedId} · ← → to move · space / enter to drop · esc to cancel`
-			: "Tab sidebar · ←/→ cols · ↑/↓ tasks · Space grab · Enter open · c new · m move · a assign · e edit · x archive · / find · q quit";
+	type Hint = { keys: string; label: string };
+	const sidebarHints: Hint[] = [
+		{ keys: "Tab", label: "board" },
+		{ keys: "↑/↓", label: "select" },
+		{ keys: "Enter", label: "apply" },
+		{ keys: "Esc", label: "back" },
+	];
+	const grabHints: Hint[] = [
+		{ keys: "←/→", label: "move" },
+		{ keys: "Space", label: "drop" },
+		{ keys: "Esc", label: "cancel" },
+	];
+	const browseHints: Hint[] = [
+		{ keys: "Tab", label: "sidebar" },
+		{ keys: "←/→", label: "cols" },
+		{ keys: "↑/↓", label: "tasks" },
+		{ keys: "Space", label: "grab" },
+		{ keys: "Enter", label: "open" },
+		{ keys: "c", label: "new" },
+		{ keys: "m", label: "move" },
+		{ keys: "a", label: "assign" },
+		{ keys: "e", label: "edit" },
+		{ keys: "x", label: "archive" },
+		{ keys: "/", label: "find" },
+		{ keys: "q", label: "quit" },
+	];
+	const footerHints: Hint[] =
+		focus === "sidebar" ? sidebarHints : grabbedId ? grabHints : browseHints;
+	const footerPrefix =
+		focus === "board" && grabbedId ? `moving ${grabbedId} · ` : null;
 
 	return (
 		<Box flexDirection="column" width={termCols} height={termRows}>
@@ -504,8 +529,21 @@ export function App(): React.JSX.Element {
 			</Box>
 
 			<Box paddingX={1} width={termCols}>
-				<Text color={theme.textMuted} wrap="truncate-end">
-					{footerHint}
+				<Text wrap="truncate-end">
+					{footerPrefix ? (
+						<Text color={theme.textMuted}>{footerPrefix}</Text>
+					) : null}
+					{footerHints.map((hint, idx) => (
+						<Text key={`${hint.keys}-${hint.label}`}>
+							{idx > 0 ? (
+								<Text color={theme.textFaint}>{"  ·  "}</Text>
+							) : null}
+							<Text color={theme.textDim} bold>
+								{hint.keys}
+							</Text>
+							<Text color={theme.textMuted}>{` ${hint.label}`}</Text>
+						</Text>
+					))}
 				</Text>
 			</Box>
 		</Box>
