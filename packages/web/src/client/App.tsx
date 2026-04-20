@@ -1,6 +1,8 @@
 import {
 	DndContext,
 	type DragEndEvent,
+	DragOverlay,
+	type DragStartEvent,
 	KeyboardSensor,
 	PointerSensor,
 	useSensor,
@@ -9,8 +11,11 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import type { OrdnaConfig, WireTask, WsEvent } from "../shared/types.js";
 import { api } from "./api.js";
+import { Card } from "./Card.js";
 import { Column } from "./Column.js";
+import { ConfirmDialog } from "./ConfirmDialog.js";
 import { CreateModal } from "./CreateModal.js";
+import { TaskModal } from "./TaskModal.js";
 
 function groupBy(tasks: WireTask[], statuses: string[]): Record<string, WireTask[]> {
 	const groups: Record<string, WireTask[]> = {};
@@ -25,6 +30,10 @@ export function App(): JSX.Element {
 	const [query, setQuery] = useState("");
 	const [toast, setToast] = useState<{ message: string; kind: "info" | "error" } | null>(null);
 	const [showCreate, setShowCreate] = useState(false);
+	const [activeId, setActiveId] = useState<string | null>(null);
+	const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+	const [openInEdit, setOpenInEdit] = useState<boolean>(false);
+	const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
 	useEffect(() => {
 		void (async () => {
@@ -68,7 +77,12 @@ export function App(): JSX.Element {
 		useSensor(KeyboardSensor),
 	);
 
+	const onDragStart = (event: DragStartEvent): void => {
+		setActiveId(String(event.active.id));
+	};
+
 	const onDragEnd = async (event: DragEndEvent): Promise<void> => {
+		setActiveId(null);
 		const over = event.over;
 		if (!over) return;
 		const targetStatus = String(over.id).replace(/^column:/, "");
@@ -86,6 +100,8 @@ export function App(): JSX.Element {
 			window.setTimeout(() => setToast(null), 4000);
 		}
 	};
+
+	const activeTask = activeId ? tasks.find((t) => t.id === activeId) ?? null : null;
 
 	const handleCreate = async (title: string): Promise<void> => {
 		try {
@@ -115,16 +131,76 @@ export function App(): JSX.Element {
 				</button>
 			</div>
 
-			<DndContext sensors={sensors} onDragEnd={onDragEnd}>
+			<DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
 				<div className="board">
 					{statuses.map((status) => (
-						<Column key={status} status={status} tasks={groups[status] ?? []} />
+						<Column
+							key={status}
+							status={status}
+							tasks={groups[status] ?? []}
+							onSelect={(id) => {
+								setOpenTaskId(id);
+								setOpenInEdit(false);
+							}}
+							onEdit={(id) => {
+								setOpenTaskId(id);
+								setOpenInEdit(true);
+							}}
+							onDelete={(id) => setConfirmDeleteId(id)}
+						/>
 					))}
 				</div>
+				<DragOverlay dropAnimation={null}>
+					{activeTask ? <Card task={activeTask} overlay /> : null}
+				</DragOverlay>
 			</DndContext>
 
 			{showCreate ? (
 				<CreateModal onSubmit={handleCreate} onCancel={() => setShowCreate(false)} />
+			) : null}
+
+			{openTaskId && config ? (() => {
+				const open = tasks.find((t) => t.id === openTaskId);
+				if (!open) return null;
+				return (
+					<TaskModal
+						task={open}
+						config={config}
+						startInEdit={openInEdit}
+						onClose={() => {
+							setOpenTaskId(null);
+							setOpenInEdit(false);
+						}}
+						onSaved={(updated) => {
+							setTasks((prev) =>
+								prev.map((t) => (t.id === updated.id ? updated : t)),
+							);
+						}}
+					/>
+				);
+			})() : null}
+
+			{confirmDeleteId ? (
+				<ConfirmDialog
+					title="Delete task?"
+					message={`This will remove ${confirmDeleteId} from disk. Make a commit first if you want to keep a record.`}
+					confirmLabel="Delete"
+					danger
+					onCancel={() => setConfirmDeleteId(null)}
+					onConfirm={async () => {
+						const id = confirmDeleteId;
+						setConfirmDeleteId(null);
+						try {
+							await api.remove(id);
+							setTasks((prev) => prev.filter((t) => t.id !== id));
+							setToast({ message: `Deleted ${id}`, kind: "info" });
+							window.setTimeout(() => setToast(null), 2500);
+						} catch (error) {
+							setToast({ message: (error as Error).message, kind: "error" });
+							window.setTimeout(() => setToast(null), 4000);
+						}
+					}}
+				/>
 			) : null}
 
 			{toast ? (

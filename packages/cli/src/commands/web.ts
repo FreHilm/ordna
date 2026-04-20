@@ -17,7 +17,14 @@ export async function runWebCommand(options: WebOptions = {}): Promise<void> {
 	console.log(c.green(`Ordna web running at ${c.bold(url)}`));
 	console.log(c.dim("Press Ctrl+C to stop."));
 
+	let shuttingDown = false;
 	const shutdown = async (): Promise<void> => {
+		if (shuttingDown) {
+			console.log(c.dim("Forcing exit."));
+			process.exit(1);
+		}
+		shuttingDown = true;
+		console.log(c.dim("Shutting down…"));
 		await handle.close();
 		process.exit(0);
 	};

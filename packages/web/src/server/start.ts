@@ -132,7 +132,14 @@ export async function runWeb(options: RunWebOptions = {}): Promise<RunWebHandle>
 
 	const close = async (): Promise<void> => {
 		await unsubscribe();
-		await new Promise<void>((r) => server.close(() => r()));
+		const s = server as unknown as {
+			closeAllConnections?: () => void;
+			closeIdleConnections?: () => void;
+			close: (cb: () => void) => void;
+		};
+		s.closeIdleConnections?.();
+		s.closeAllConnections?.();
+		await new Promise<void>((r) => s.close(() => r()));
 	};
 
 	return { port: actualPort, close, context: ctx };

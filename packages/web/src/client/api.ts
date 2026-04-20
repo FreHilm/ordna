@@ -3,7 +3,14 @@ import type { OrdnaConfig, WireTask } from "../shared/types.js";
 async function json<T>(res: Response): Promise<T> {
 	if (!res.ok) {
 		const text = await res.text();
-		throw new Error(text || `${res.status} ${res.statusText}`);
+		let message = text;
+		try {
+			const parsed = JSON.parse(text) as { error?: string; message?: string };
+			message = parsed.error ?? parsed.message ?? text;
+		} catch {
+			// not JSON — use raw text
+		}
+		throw new Error(message || `${res.status} ${res.statusText}`);
 	}
 	return (await res.json()) as T;
 }
