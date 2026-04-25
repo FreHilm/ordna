@@ -9,7 +9,7 @@ import {
 	watchTasks,
 	type StoreContext,
 	type Task,
-} from "@ordna/core";
+} from "@frehilm/ordna-core";
 import { Box, Text, useApp, useInput, useStdin } from "ink";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { type AgentHookConfig, loadAgentHook, sendAgent } from "../agent.js";

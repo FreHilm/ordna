@@ -1,4 +1,4 @@
-import type { Task } from "@ordna/core";
+import type { Task } from "@frehilm/ordna-core";
 import { Box, Text } from "ink";
 import React from "react";
 import { Card } from "./Card.js";

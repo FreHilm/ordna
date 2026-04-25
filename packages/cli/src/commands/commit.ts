@@ -1,4 +1,4 @@
-import { commitTasks, createContext } from "@ordna/core";
+import { commitTasks, createContext } from "@frehilm/ordna-core";
 import { c } from "../colors.js";
 
 export async function runCommit(message: string | undefined): Promise<void> {

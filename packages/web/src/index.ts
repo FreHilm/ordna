@@ -1,4 +1,4 @@
-export * from "@ordna/core";
+export * from "@frehilm/ordna-core";
 
 export { runWeb } from "./server/start.js";
 export type { RunWebOptions, RunWebHandle } from "./server/start.js";

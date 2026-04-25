@@ -1,4 +1,4 @@
-import { createContext, createTask, type Priority } from "@ordna/core";
+import { createContext, createTask, type Priority } from "@frehilm/ordna-core";
 import { c } from "../colors.js";
 
 export interface CreateOptions {

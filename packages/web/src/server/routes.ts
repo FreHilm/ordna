@@ -6,7 +6,7 @@ import {
 	moveTask,
 	type StoreContext,
 	updateTask,
-} from "@ordna/core";
+} from "@frehilm/ordna-core";
 import { Hono } from "hono";
 import { toWireTask } from "../shared/types.js";
 import { type AgentHookConfig, postAgent } from "./agent.js";

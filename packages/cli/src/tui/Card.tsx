@@ -1,4 +1,4 @@
-import { extractAcceptanceCriteria, type Task } from "@ordna/core";
+import { extractAcceptanceCriteria, type Task } from "@frehilm/ordna-core";
 import { Box, Text } from "ink";
 import React, { useMemo } from "react";
 import { tagColor, theme } from "./theme.js";

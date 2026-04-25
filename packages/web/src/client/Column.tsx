@@ -43,14 +43,14 @@ export function Column({
 	const { setNodeRef, isOver } = useDroppable({ id: `column:${status}` });
 
 	return (
-		<div ref={setNodeRef} className={`column ${isOver ? "drop-target" : ""}`}>
-			<div className="column-header">
-				<span className={`dot status-dot ${status}`} />
-				<span className="title">{status}</span>
-				<span className="count">{tasks.length}</span>
+		<div className="col">
+			<div className="col-head">
+				<span className={`col-dot ${color}`} />
+				<span className="col-title">{status}</span>
+				<span className="col-count">{tasks.length}</span>
 			</div>
-			<div className="column-body">
-				{tasks.length === 0 ? <div className="empty">Drop tasks here</div> : null}
+			<div ref={setNodeRef} className={`col-body ${isOver ? "drop-active" : ""}`}>
+				{tasks.length === 0 ? <div className="col-empty">Drop tasks here</div> : null}
 				{tasks.map((task) => (
 					<Card
 						key={task.id}

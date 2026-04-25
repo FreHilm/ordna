@@ -1,5 +1,5 @@
 {
-  "name": "@ordna/web",
+  "name": "@frehilm/ordna-web",
   "version": "0.0.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -23,7 +23,7 @@
   "dependencies": {
     "@hono/node-server": "^1.13.8",
     "@hono/node-ws": "^1.0.7",
-    "@ordna/core": "workspace:*",
+    "@frehilm/ordna-core": "workspace:*",
     "hono": "^4.6.16"
   },
   "devDependencies": {

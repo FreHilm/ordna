@@ -91,7 +91,12 @@ function DraggableCard({
 			}}
 		>
 			<CardContent task={task} className={`card ${isDragging ? "dragging" : ""}`} />
-			<div className="card-actions" onPointerDown={stop} onMouseDown={stop}>
+			<div
+				className="card-actions"
+				onPointerDown={stop}
+				onPointerUp={stop}
+				onMouseDown={stop}
+			>
 				{agentHook?.enabled ? (
 					<button
 						type="button"

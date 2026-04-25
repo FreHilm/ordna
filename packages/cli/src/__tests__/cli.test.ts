@@ -26,7 +26,7 @@ describe("ordna CLI", () => {
 
 	beforeAll(() => {
 		if (!existsSync(CLI_BIN)) {
-			throw new Error(`Build missing: ${CLI_BIN}. Run \`pnpm --filter @ordna/cli build\`.`);
+			throw new Error(`Build missing: ${CLI_BIN}. Run \`pnpm --filter @frehilm/ordna-cli build\`.`);
 		}
 		cwd = mkdtempSync(join(tmpdir(), "ordna-cli-"));
 	});

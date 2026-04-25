@@ -1,4 +1,4 @@
-import { runWeb } from "@ordna/web";
+import { runWeb } from "@frehilm/ordna-web";
 import { c } from "../colors.js";
 
 export interface WebOptions {

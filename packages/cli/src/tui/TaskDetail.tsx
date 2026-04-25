@@ -1,4 +1,4 @@
-import type { Task } from "@ordna/core";
+import type { Task } from "@frehilm/ordna-core";
 import { Box, Text, useInput } from "ink";
 import React from "react";
 import { colorForStatus, theme } from "./theme.js";

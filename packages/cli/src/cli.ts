@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import type { Priority } from "@ordna/core";
+import type { Priority } from "@frehilm/ordna-core";
 import { runAssign } from "./commands/assign.js";
 import { runCommit } from "./commands/commit.js";
 import { runCreate } from "./commands/create.js";

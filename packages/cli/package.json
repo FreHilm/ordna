@@ -1,5 +1,5 @@
 {
-  "name": "@ordna/cli",
+  "name": "@frehilm/ordna-cli",
   "version": "0.0.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -21,8 +21,8 @@
     "dev": "tsx src/bin/ordna.ts"
   },
   "dependencies": {
-    "@ordna/core": "workspace:*",
-    "@ordna/web": "workspace:*",
+    "@frehilm/ordna-core": "workspace:*",
+    "@frehilm/ordna-web": "workspace:*",
     "commander": "^12.1.0",
     "ink": "^5.1.1",
     "ink-text-input": "^6.0.0",

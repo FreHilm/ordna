@@ -1,4 +1,4 @@
-import type { Task } from "@ordna/core";
+import type { Task } from "@frehilm/ordna-core";
 
 export interface AgentHookConfig {
 	url: string;

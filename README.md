@@ -6,7 +6,7 @@ Git-native project management. Tasks are markdown files. The board is derived fr
 - **No hidden state.** Every task is a file you can read, edit, diff, and review.
 - **CLI, TUI, and Web Kanban** — all backed by the same core library.
 - **Backlog.md compatible.** Opens existing Backlog.md repos.
-- **One-package embedding.** `@ordna/web` and `@ordna/cli` both re-export the full core API — install just the surface you want.
+- **One-package embedding.** `@frehilm/ordna-web` and `@frehilm/ordna-cli` both re-export the full core API — install just the surface you want.
 
 ## Why
 
@@ -25,7 +25,7 @@ pnpm -r build
 The `ordna` binary lives at `packages/cli/dist/bin/ordna.js`. Link it into your path:
 
 ```bash
-pnpm --filter @ordna/cli link --global
+pnpm --filter @frehilm/ordna-cli link --global
 # or
 alias ordna="node $PWD/packages/cli/dist/bin/ordna.js"
 ```
@@ -205,21 +205,21 @@ In `schema: backlog` mode, Ordna writes Backlog-style filenames (`task-1 - title
 
 ## Embedding in a host (IDE / Electron / scripts)
 
-Each package is independently usable, and the two UI packages re-export the entire `@ordna/core` API. So whichever surface you embed, you only ever install one Ordna package — there is no transitive `core` dep to wire up.
+Each package is independently usable, and the two UI packages re-export the entire `@frehilm/ordna-core` API. So whichever surface you embed, you only ever install one Ordna package — there is no transitive `core` dep to wire up.
 
 | You want                  | Install                          | Single import covers                              |
 |---------------------------|----------------------------------|---------------------------------------------------|
-| Just the data layer       | `@ordna/core`                    | parser, store, watcher, git, types                |
-| Embed the web kanban      | `@ordna/web`                     | core API + `runWeb()`                             |
-| Embed the TUI             | `@ordna/cli`                     | core API + `runBoard()`                           |
-| Both UIs                  | `@ordna/web` + `@ordna/cli`      | both UIs; pnpm dedupes the shared core            |
-| Standalone CLI binary     | `npm i -g @ordna/cli`            | `ordna` on `$PATH`                                |
+| Just the data layer       | `@frehilm/ordna-core`                    | parser, store, watcher, git, types                |
+| Embed the web kanban      | `@frehilm/ordna-web`                     | core API + `runWeb()`                             |
+| Embed the TUI             | `@frehilm/ordna-cli`                     | core API + `runBoard()`                           |
+| Both UIs                  | `@frehilm/ordna-web` + `@frehilm/ordna-cli`      | both UIs; pnpm dedupes the shared core            |
+| Standalone CLI binary     | `npm i -g @frehilm/ordna-cli`            | `ordna` on `$PATH`                                |
 
 ### Minimal Electron embed
 
 ```ts
 // main process
-import { runWeb, listTasks, watchTasks, ARCHIVED_STATUS } from "@ordna/web";
+import { runWeb, listTasks, watchTasks, ARCHIVED_STATUS } from "@frehilm/ordna-web";
 import { app, BrowserWindow } from "electron";
 
 const ide = await runWeb({
@@ -236,17 +236,17 @@ const ide = await runWeb({
 new BrowserWindow().loadURL(`http://127.0.0.1:${ide.port}`);
 app.on("before-quit", () => ide.close());
 
-// In a side panel: live task list — same API, no separate @ordna/core install
+// In a side panel: live task list — same API, no separate @frehilm/ordna-core install
 const tasks = await listTasks(ide.context);
 const stop = watchTasks(ide.context, (event) => {
   // event: { type: "added" | "changed" | "removed", task | id }
 });
 ```
 
-For the **TUI in a terminal pane**, the simplest path is to spawn the `ordna` binary inside `node-pty` and pipe to `xterm.js` — the TUI gets a real TTY for raw-mode input. If you'd rather keep it in-process, `runBoard()` is also exported from `@ordna/cli`:
+For the **TUI in a terminal pane**, the simplest path is to spawn the `ordna` binary inside `node-pty` and pipe to `xterm.js` — the TUI gets a real TTY for raw-mode input. If you'd rather keep it in-process, `runBoard()` is also exported from `@frehilm/ordna-cli`:
 
 ```ts
-import { runBoard } from "@ordna/cli";
+import { runBoard } from "@frehilm/ordna-cli";
 
 await runBoard({
   agentHook: { url, label, headers },   // same shape as runWeb's
@@ -307,9 +307,9 @@ http.createServer((req, res) => {
 ```
 Filesystem (Git repo)
     ↓
-@ordna/core      library — parser, writer, store, watcher, ids, git, config
+@frehilm/ordna-core      library — parser, writer, store, watcher, ids, git, config
     ↓         ↙         ↘
-@ordna/cli        @ordna/web
+@frehilm/ordna-cli        @frehilm/ordna-web
   (CLI + TUI)    (Hono server + React SPA)
 ```
 
@@ -332,17 +332,17 @@ Filesystem (Git repo)
 pnpm install
 pnpm -r build          # build all packages
 pnpm -r test           # run all tests (core: 20 · cli: 8 · web: 8)
-pnpm --filter @ordna/web dev:server    # run server in watch mode
-pnpm --filter @ordna/web dev:client    # run vite dev server on :5173
+pnpm --filter @frehilm/ordna-web dev:server    # run server in watch mode
+pnpm --filter @frehilm/ordna-web dev:client    # run vite dev server on :5173
 ```
 
 ## Package layout
 
 ```
 packages/
-  core/   @ordna/core  — pure library
-  cli/    @ordna/cli   — `ordna` binary + Ink TUI
-  web/    @ordna/web   — Hono server + React SPA
+  core/   @frehilm/ordna-core  — pure library
+  cli/    @frehilm/ordna-cli   — `ordna` binary + Ink TUI
+  web/    @frehilm/ordna-web   — Hono server + React SPA
 ```
 
 ## License

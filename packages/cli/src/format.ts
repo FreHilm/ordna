@@ -1,4 +1,4 @@
-import type { OrdnaConfig, Task } from "@ordna/core";
+import type { OrdnaConfig, Task } from "@frehilm/ordna-core";
 import { c } from "./colors.js";
 
 const STATUS_COLORS: Record<string, (t: string) => string> = {

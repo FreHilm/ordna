@@ -1,7 +1,7 @@
 import { serveStatic } from "@hono/node-server/serve-static";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
-import { createContext as createStoreContext, watchTasks, type StoreContext } from "@ordna/core";
+import { createContext as createStoreContext, watchTasks, type StoreContext } from "@frehilm/ordna-core";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -112,7 +112,7 @@ export async function runWeb(options: RunWebOptions = {}): Promise<RunWebHandle>
 	} else {
 		app.get("/", (c) =>
 			c.text(
-				"Ordna server is running. Client bundle missing — run `pnpm --filter @ordna/web build:client`.",
+				"Ordna server is running. Client bundle missing — run `pnpm --filter @frehilm/ordna-web build:client`.",
 			),
 		);
 	}

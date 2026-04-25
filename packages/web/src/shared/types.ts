@@ -1,4 +1,4 @@
-import type { OrdnaConfig, Task, TaskCreateInput, TaskUpdateInput } from "@ordna/core";
+import type { OrdnaConfig, Task, TaskCreateInput, TaskUpdateInput } from "@frehilm/ordna-core";
 
 export type { OrdnaConfig, Task, TaskCreateInput, TaskUpdateInput };
 

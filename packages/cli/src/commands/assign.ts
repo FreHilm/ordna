@@ -1,4 +1,4 @@
-import { createContext, updateTask } from "@ordna/core";
+import { createContext, updateTask } from "@frehilm/ordna-core";
 import { c } from "../colors.js";
 
 export async function runAssign(id: string, assignee: string | undefined): Promise<void> {

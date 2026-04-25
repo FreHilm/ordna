@@ -1,4 +1,4 @@
-export * from "@ordna/core";
+export * from "@frehilm/ordna-core";
 
 export { runBoard } from "./tui/index.js";
 export type { RunBoardOptions } from "./tui/index.js";

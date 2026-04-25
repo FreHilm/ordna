@@ -29,7 +29,7 @@ ordna/
 TUI lives inside `cli` — they ship together. Split later only if it grows.
 
 ### Core library API
-Exported from `@ordna/core` as pure functions returning plain data:
+Exported from `@frehilm/ordna-core` as pure functions returning plain data:
 ```ts
 listTasks(opts?) → Task[]
 getTask(id) → Task | null

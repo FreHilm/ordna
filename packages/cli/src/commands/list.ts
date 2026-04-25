@@ -1,4 +1,4 @@
-import { createContext, listTasks } from "@ordna/core";
+import { createContext, listTasks } from "@frehilm/ordna-core";
 import { c } from "../colors.js";
 import { formatListRow, summarizeStatuses } from "../format.js";
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { AgentHookInfo, OrdnaConfig, WireTask } from "../shared/types.js";
 import {
 	ACCEPTANCE_HEADING_RE,
@@ -89,6 +89,10 @@ export function TaskModal({
 	const [draft, setDraft] = useState<Draft>(() => toDraft(task));
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	// Tracks whether this modal session was opened directly into edit mode
+	// (e.g. via the card's Edit button). Save / Cancel close the modal in that
+	// case; otherwise they fall back to view mode.
+	const closeAfterEdit = useRef<boolean>(Boolean(startInEdit));
 
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent): void => {
@@ -101,6 +105,13 @@ export function TaskModal({
 	useEffect(() => {
 		setDraft(toDraft(task));
 	}, [task]);
+
+	useEffect(() => {
+		if (startInEdit) {
+			setEditing(true);
+			closeAfterEdit.current = true;
+		}
+	}, [startInEdit, task.id]);
 
 	const viewAcceptance = useMemo<AcceptanceItem[]>(() => {
 		const section = task.sections.find((s) => isAcceptance(s.heading));
@@ -121,7 +132,11 @@ export function TaskModal({
 				sections: sectionsForSave(draft),
 			});
 			onSaved(updated);
-			setEditing(false);
+			if (closeAfterEdit.current) {
+				onClose();
+			} else {
+				setEditing(false);
+			}
 		} catch (e) {
 			setError((e as Error).message);
 		} finally {
@@ -431,8 +446,12 @@ export function TaskModal({
 							className="btn"
 							onClick={() => {
 								setDraft(toDraft(task));
-								setEditing(false);
 								setError(null);
+								if (closeAfterEdit.current) {
+									onClose();
+								} else {
+									setEditing(false);
+								}
 							}}
 						>
 							Cancel
