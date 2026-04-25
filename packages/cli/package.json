@@ -1,6 +1,17 @@
 {
   "name": "@frehilm/ordna-cli",
   "version": "0.0.0",
+  "description": "The `ordna` CLI and Ink-based Kanban TUI for Ordna. Re-exports the core API.",
+  "license": "MIT",
+  "author": "FreHilm <1584617+FreHilm@users.noreply.github.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FreHilm/ordna.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/FreHilm/ordna/tree/main/packages/cli#readme",
+  "bugs": "https://github.com/FreHilm/ordna/issues",
+  "keywords": ["kanban", "tui", "cli", "ordna", "tasks", "markdown"],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
