@@ -115,6 +115,70 @@ describe("agent hook", () => {
 	});
 });
 
+describe("programmatic agentHook overrides env", () => {
+	let hookServer: ReturnType<typeof createServer>;
+	let hookUrl: string;
+	let received: Array<{ headers: Record<string, string | undefined> }>;
+	let handle: RunWebHandle;
+	let base: string;
+
+	beforeAll(async () => {
+		received = [];
+		hookServer = createServer((req, res) => {
+			received.push({
+				headers: { "x-agent-token": req.headers["x-agent-token"] as string | undefined },
+			});
+			res.writeHead(200, { "Content-Type": "application/json" });
+			res.end("{}");
+		});
+		await new Promise<void>((r) => hookServer.listen(0, "127.0.0.1", r));
+		const addr = hookServer.address() as AddressInfo;
+		hookUrl = `http://127.0.0.1:${addr.port}/programmatic`;
+
+		// Env var is intentionally bogus — we should NOT use it.
+		process.env.ORDNA_AGENT_HOOK_URL = "http://127.0.0.1:0/should-not-be-used";
+		process.env.ORDNA_AGENT_HOOK_LABEL = "FromEnv";
+
+		const cwd = setupRepo();
+		handle = await runWeb({
+			cwd,
+			port: 0,
+			host: "127.0.0.1",
+			openBrowser: false,
+			agentHook: {
+				url: hookUrl,
+				label: "FromCode",
+				headers: { "X-Agent-Token": "from-code" },
+			},
+		});
+		base = `http://127.0.0.1:${handle.port}`;
+	});
+
+	afterAll(async () => {
+		await handle.close();
+		await new Promise<void>((r) => hookServer.close(() => r()));
+		delete process.env.ORDNA_AGENT_HOOK_URL;
+		delete process.env.ORDNA_AGENT_HOOK_LABEL;
+	});
+
+	it("uses the programmatic config, not the env vars", async () => {
+		const cfgRes = await fetch(`${base}/api/config`);
+		const cfg = (await cfgRes.json()) as {
+			agentHook: { enabled: boolean; label: string };
+		};
+		expect(cfg.agentHook.label).toBe("FromCode");
+
+		await fetch(`${base}/api/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "X" }),
+		});
+		const res = await fetch(`${base}/api/tasks/T-001/agent`, { method: "POST" });
+		expect(res.status).toBe(200);
+		expect(received[0]?.headers["x-agent-token"]).toBe("from-code");
+	});
+});
+
 describe("agent hook disabled", () => {
 	let handle: RunWebHandle;
 	let base: string;

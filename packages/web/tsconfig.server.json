@@ -6,6 +6,6 @@
     "types": ["node"],
     "exactOptionalPropertyTypes": false
   },
-  "include": ["src/server/**/*", "src/shared/**/*"],
+  "include": ["src/index.ts", "src/server/**/*", "src/shared/**/*"],
   "exclude": ["dist", "node_modules", "src/**/*.test.ts"]
 }

@@ -55,7 +55,11 @@ function flattenSidebarRows(rows: ReturnType<typeof buildSidebarRows>): SidebarR
 	return [...rows.views, ...rows.priorities, ...rows.tags];
 }
 
-export function App(): React.JSX.Element {
+export interface AppProps {
+	agentHook?: AgentHookConfig | null;
+}
+
+export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Element {
 	const { exit } = useApp();
 	const { setRawMode } = useStdin();
 	const { rows: termRows, columns: termCols } = useTerminalSize();
@@ -72,7 +76,10 @@ export function App(): React.JSX.Element {
 	const [focus, setFocus] = useState<Focus>("board");
 	const [sidebarFocusedKey, setSidebarFocusedKey] = useState<string | null>(null);
 	const [scrollOffsets, setScrollOffsets] = useState<Record<string, number>>({});
-	const [agentHook] = useState<AgentHookConfig | null>(() => loadAgentHook());
+	const [agentHook] = useState<AgentHookConfig | null>(() => {
+		if (agentHookProp !== undefined) return agentHookProp;
+		return loadAgentHook();
+	});
 
 	const statuses = ctx.config.statuses;
 

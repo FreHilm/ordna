@@ -6,7 +6,7 @@ Git-native project management. Tasks are markdown files. The board is derived fr
 - **No hidden state.** Every task is a file you can read, edit, diff, and review.
 - **CLI, TUI, and Web Kanban** — all backed by the same core library.
 - **Backlog.md compatible.** Opens existing Backlog.md repos.
-- **Host-friendly.** Embed in an IDE via an HTTP hook; both surfaces detect it automatically.
+- **One-package embedding.** `@ordna/web` and `@ordna/cli` both re-export the full core API — install just the surface you want.
 
 ## Why
 
@@ -203,17 +203,69 @@ schema: backlog
 
 In `schema: backlog` mode, Ordna writes Backlog-style filenames (`task-1 - title.md`) and field names. Tasks round-trip cleanly between tools.
 
-## Agent hook (IDE / host integration)
+## Embedding in a host (IDE / Electron / scripts)
 
-Ordna can invite a host process (an IDE, an agent runner, a CI tool) to act on a task. The hook is **strictly opt-in via environment variable** — no host → no button, no shortcut, standalone behavior unchanged.
+Each package is independently usable, and the two UI packages re-export the entire `@ordna/core` API. So whichever surface you embed, you only ever install one Ordna package — there is no transitive `core` dep to wire up.
 
-Configure the host before launching `ordna` or `ordna web`:
+| You want                  | Install                          | Single import covers                              |
+|---------------------------|----------------------------------|---------------------------------------------------|
+| Just the data layer       | `@ordna/core`                    | parser, store, watcher, git, types                |
+| Embed the web kanban      | `@ordna/web`                     | core API + `runWeb()`                             |
+| Embed the TUI             | `@ordna/cli`                     | core API + `runBoard()`                           |
+| Both UIs                  | `@ordna/web` + `@ordna/cli`      | both UIs; pnpm dedupes the shared core            |
+| Standalone CLI binary     | `npm i -g @ordna/cli`            | `ordna` on `$PATH`                                |
+
+### Minimal Electron embed
+
+```ts
+// main process
+import { runWeb, listTasks, watchTasks, ARCHIVED_STATUS } from "@ordna/web";
+import { app, BrowserWindow } from "electron";
+
+const ide = await runWeb({
+  cwd: workspaceRoot,
+  port: 0,                              // OS-assigned
+  openBrowser: false,
+  agentHook: {                          // programmatic, no env var needed
+    url: `http://127.0.0.1:${ideHookPort}/agent`,
+    label: "Claude",
+    headers: { "X-IDE-Token": ideToken },
+  },
+});
+
+new BrowserWindow().loadURL(`http://127.0.0.1:${ide.port}`);
+app.on("before-quit", () => ide.close());
+
+// In a side panel: live task list — same API, no separate @ordna/core install
+const tasks = await listTasks(ide.context);
+const stop = watchTasks(ide.context, (event) => {
+  // event: { type: "added" | "changed" | "removed", task | id }
+});
+```
+
+For the **TUI in a terminal pane**, the simplest path is to spawn the `ordna` binary inside `node-pty` and pipe to `xterm.js` — the TUI gets a real TTY for raw-mode input. If you'd rather keep it in-process, `runBoard()` is also exported from `@ordna/cli`:
+
+```ts
+import { runBoard } from "@ordna/cli";
+
+await runBoard({
+  agentHook: { url, label, headers },   // same shape as runWeb's
+});
+```
+
+### Agent hook
+
+The agent hook is **strictly opt-in** — nothing appears unless you wire it up, so the standalone CLI / web behavior is unchanged.
+
+For terminal users, set env vars:
 
 ```bash
 export ORDNA_AGENT_HOOK_URL=http://127.0.0.1:9999/agent
 export ORDNA_AGENT_HOOK_LABEL=Claude                      # optional, default "Agent"
 export ORDNA_AGENT_HOOK_HEADERS='{"X-Agent-Token":"…"}'   # optional JSON headers
 ```
+
+For embedded hosts, pass `agentHook` directly to `runWeb` / `runBoard` (shown above). The programmatic option **wins** over env vars; pass `agentHook: null` to explicitly disable the hook even when env vars are set.
 
 When enabled:
 
@@ -234,7 +286,7 @@ The hook URL is never exposed to the browser — the web SPA calls `POST /api/ta
 
 A 2xx response means "accepted" — the button toasts `Sent T-001 to Claude`. Anything else surfaces the response body as an error toast.
 
-Typical host setup (TypeScript):
+Minimal host listener (Node):
 
 ```ts
 http.createServer((req, res) => {

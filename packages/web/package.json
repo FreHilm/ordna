@@ -2,12 +2,12 @@
   "name": "@ordna/web",
   "version": "0.0.0",
   "type": "module",
-  "main": "./dist/server/start.js",
-  "types": "./dist/server/start.d.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/server/start.d.ts",
-      "import": "./dist/server/start.js"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     }
   },
   "files": ["dist", "dist-client"],

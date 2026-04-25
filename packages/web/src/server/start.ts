@@ -6,7 +6,7 @@ import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Hono } from "hono";
-import { loadAgentHook } from "./agent.js";
+import { type AgentHookConfig, loadAgentHook } from "./agent.js";
 import { buildApiRoutes } from "./routes.js";
 import { toWireTask, type WsEvent } from "../shared/types.js";
 
@@ -16,6 +16,11 @@ export interface RunWebOptions {
 	host?: string;
 	openBrowser?: boolean;
 	clientDir?: string;
+	/**
+	 * Programmatic agent hook config. Overrides ORDNA_AGENT_HOOK_* env vars.
+	 * Pass `null` to disable the hook explicitly even if env vars are set.
+	 */
+	agentHook?: AgentHookConfig | null;
 }
 
 export interface RunWebHandle {
@@ -46,7 +51,10 @@ export async function runWeb(options: RunWebOptions = {}): Promise<RunWebHandle>
 	const app = new Hono();
 	const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 
-	const agentHook = loadAgentHook();
+	const agentHook =
+		options.agentHook === null
+			? null
+			: options.agentHook ?? loadAgentHook();
 	app.route("/api", buildApiRoutes(ctx, agentHook));
 
 	type Client = { send: (data: string) => void };
