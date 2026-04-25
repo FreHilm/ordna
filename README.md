@@ -6,6 +6,7 @@ Git-native project management. Tasks are markdown files. The board is derived fr
 - **No hidden state.** Every task is a file you can read, edit, diff, and review.
 - **CLI, TUI, and Web Kanban** — all backed by the same core library.
 - **Backlog.md compatible.** Opens existing Backlog.md repos.
+- **Host-friendly.** Embed in an IDE via an HTTP hook; both surfaces detect it automatically.
 
 ## Why
 
@@ -78,6 +79,13 @@ Acceptance criteria are plain markdown checkboxes. The files are the API — edi
 
 `depends_on` is enforced: moving a task to the terminal status (`done` by default) while any dependency is unfinished is rejected with a clear error. Other status transitions are free.
 
+### Archiving
+
+`archived` is a reserved status. Any task moved to `archived` disappears from the active board and the `All tasks` view. To see them, open the **Archived** row in the sidebar (TUI and Web). You don't need to add `archived` to `statuses` in your config — it's always available.
+
+In the TUI: press `x` on a selected task to archive it.
+In the Web: open the task modal and pick `archived` from the Status dropdown.
+
 ## CLI
 
 ```
@@ -100,22 +108,36 @@ ordna web [-p port]       Start the local web Kanban
 
 ## TUI
 
-Launch with `ordna` or `ordna board`. Keyboard:
+Launch with `ordna` or `ordna board`. A three-pane layout: topbar · filter sidebar · board (columns) · subbar · footer hints.
 
-| Key            | Action                     |
-|----------------|----------------------------|
-| ← → / h l      | Switch column              |
-| ↑ ↓ / j k      | Select task in column      |
-| Enter          | Open task detail           |
-| c              | Create a new task          |
-| m              | Move task to another column|
-| a              | Set assignee               |
-| e              | Edit in `$EDITOR`          |
-| /              | Search                     |
-| Esc            | Clear search               |
-| q              | Quit                       |
+| Key            | Action                                   |
+|----------------|------------------------------------------|
+| `Tab`          | Toggle focus between sidebar and board   |
+| `← → / h l`    | Switch column (board) / unused (sidebar) |
+| `↑ ↓ / j k`    | Select task / sidebar row                |
+| `Enter`        | Open task detail popup / apply filter    |
+| `Space`        | Pick up task; then `← →` to move columns |
+| `c`            | Create a new task                        |
+| `m`            | Move task via status picker              |
+| `a`            | Set assignee                             |
+| `e`            | Edit the task file in `$EDITOR`          |
+| `x`            | Archive selected task                    |
+| `g`            | Send task to agent hook (only if enabled)|
+| `/`            | Search                                   |
+| `Esc`          | Clear search / drop / close              |
+| `q`            | Quit                                     |
 
-The TUI reloads automatically when task files change on disk — whether from the CLI, the web, another agent, or your editor.
+**Sidebar**: `Views` (All / each configured status / Archived) · `Priority` (high/medium/low) · `Tags` (top 8 by usage). Counts are live. Selected filter scopes the board and the subbar title.
+
+**Columns**:
+- Double-line border, colored dot for the status, title + count.
+- Single-line rows: `› T-001  !h  Title   #tag @user  ███░░ 3/5  ↪1` — priority letter, colored tag chips, assignee, acceptance-criteria progress bar, depends-on count.
+- Scrolling: when a column overflows, `↑ N more` and `↓ N more` indicators appear. Selection auto-scrolls to stay visible. Moving a task scrolls the target column to reveal it.
+- Columns fill the available width evenly — except the **Archived** view, where the lane keeps a single-column width.
+
+**Popup**: Enter on a task opens a centered modal with the full body. `e` opens in `$EDITOR`. `Esc`/`q` closes.
+
+The TUI runs in the alternate screen buffer (no scrollback pollution) and reloads automatically when task files change on disk.
 
 ## Web
 
@@ -125,13 +147,25 @@ ordna web
 
 Starts a local server (default port `7420`) and opens `http://127.0.0.1:7420` in your browser.
 
-- Columns per configured status
-- Drag-and-drop between columns (optimistic updates, rolls back on server rejection)
-- Live updates over WebSocket
-- Search by id, title, or tag
-- Dark theme
+- Topbar with brand, tasks-dir crumb, search, theme toggle, shortcuts, and `+ New task`.
+- Filter sidebar: Views (All + each status + Archived) · Priority · Tags.
+- Subbar showing the current view and visible/total counts.
+- Columns per configured status, drag-and-drop with a rotated floating overlay and optimistic updates (rolls back on server rejection).
+- Cards: id, priority chip, title, tag chips (hashed colors), bottom meta (assignee + AC progress). Hover reveals Edit / Delete action buttons.
+- Click a card → **view-mode modal**. Big title, status/priority/assignee/tags chips, acceptance-criteria checklist (click a box to toggle and auto-save), section bodies, side panel. Press **Edit** to switch to edit mode: title, status, priority, assignee, tags (chip input), depends_on (chip input), acceptance list UI, section textareas. Save / Cancel.
+- Light / dark theme toggle (persisted).
+- Keyboard shortcuts:
 
-The web process is local. Nothing leaves the machine.
+  | Key   | Action                     |
+  |-------|----------------------------|
+  | `⌘/Ctrl + K` | Command palette (search tasks + actions) |
+  | `n`   | New task                   |
+  | `/`   | Focus search               |
+  | `t`   | Toggle theme               |
+  | `?`   | Toggle shortcut cheatsheet |
+  | `Esc` | Close modal / overlay      |
+
+Everything is over WebSocket — changes from the TUI, CLI, editor, or another tab show up instantly. The web process is local; nothing leaves the machine.
 
 ## Configuration
 
@@ -146,7 +180,7 @@ zeroPaddedIds: 3           # width of the numeric part (0 = no padding)
 webPort: 7420
 ```
 
-Columns in the board map 1:1 to `statuses`. The last entry is the "done" status for dependency gating.
+Columns in the board map 1:1 to `statuses`. The last entry is the "done" status for dependency gating. `archived` is reserved and always available; it doesn't appear in `statuses`.
 
 ## Backlog.md compatibility
 
@@ -168,6 +202,53 @@ schema: backlog
 ```
 
 In `schema: backlog` mode, Ordna writes Backlog-style filenames (`task-1 - title.md`) and field names. Tasks round-trip cleanly between tools.
+
+## Agent hook (IDE / host integration)
+
+Ordna can invite a host process (an IDE, an agent runner, a CI tool) to act on a task. The hook is **strictly opt-in via environment variable** — no host → no button, no shortcut, standalone behavior unchanged.
+
+Configure the host before launching `ordna` or `ordna web`:
+
+```bash
+export ORDNA_AGENT_HOOK_URL=http://127.0.0.1:9999/agent
+export ORDNA_AGENT_HOOK_LABEL=Claude                      # optional, default "Agent"
+export ORDNA_AGENT_HOOK_HEADERS='{"X-Agent-Token":"…"}'   # optional JSON headers
+```
+
+When enabled:
+
+- **Web**: each card hovers an amber `Claude` (or whatever you named it) action button; the task modal shows the same in its header.
+- **TUI**: press `g` on any selected task. The footer gains a `g claude` hint only when the hook is enabled.
+
+Both surfaces POST the same JSON to your URL:
+
+```json
+{
+  "action": "agent",
+  "task": { /* full WireTask — id, title, status, assignee, priority, tags, depends_on, sections, created_at, updated_at, filePath, … */ },
+  "context": { "tasksDir": "tasks", "cwd": "/path/to/repo", "schema": "ordna" }
+}
+```
+
+The hook URL is never exposed to the browser — the web SPA calls `POST /api/tasks/:id/agent`, the server forwards on its behalf. Custom headers stay server-side too.
+
+A 2xx response means "accepted" — the button toasts `Sent T-001 to Claude`. Anything else surfaces the response body as an error toast.
+
+Typical host setup (TypeScript):
+
+```ts
+http.createServer((req, res) => {
+  if (req.url === "/agent" && req.method === "POST") {
+    let body = "";
+    req.on("data", (c) => body += c);
+    req.on("end", () => {
+      const { task, context } = JSON.parse(body);
+      runAgent(task, context);   // your code
+      res.writeHead(202).end();
+    });
+  }
+}).listen(9999, "127.0.0.1");
+```
 
 ## Architecture
 
@@ -191,13 +272,14 @@ Filesystem (Git repo)
 - **Git is the source of truth.** Branches, merges, and blame are how you reason about task history.
 - **Commits are explicit.** Ordna never auto-commits. Use `ordna commit` or plain `git commit`.
 - **Zero-config defaults are load-bearing.** With no config file, Ordna behaves as documented. Config only expands capability.
+- **Host integrations are opt-in.** If the env vars aren't set, there's nothing to see — Ordna is fully standalone.
 
 ## Development
 
 ```bash
 pnpm install
 pnpm -r build          # build all packages
-pnpm -r test           # run all tests
+pnpm -r test           # run all tests (core: 20 · cli: 8 · web: 8)
 pnpm --filter @ordna/web dev:server    # run server in watch mode
 pnpm --filter @ordna/web dev:client    # run vite dev server on :5173
 ```

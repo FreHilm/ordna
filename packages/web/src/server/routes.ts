@@ -9,11 +9,20 @@ import {
 } from "@ordna/core";
 import { Hono } from "hono";
 import { toWireTask } from "../shared/types.js";
+import { type AgentHookConfig, postAgent } from "./agent.js";
 
-export function buildApiRoutes(ctx: StoreContext): Hono {
+export function buildApiRoutes(
+	ctx: StoreContext,
+	agentHook: AgentHookConfig | null,
+): Hono {
 	const api = new Hono();
 
-	api.get("/config", (c) => c.json(ctx.config));
+	api.get("/config", (c) =>
+		c.json({
+			...ctx.config,
+			agentHook: agentHook ? { enabled: true, label: agentHook.label } : null,
+		}),
+	);
 
 	api.get("/tasks", async (c) => {
 		const tasks = await listTasks(ctx);
@@ -61,6 +70,28 @@ export function buildApiRoutes(ctx: StoreContext): Hono {
 			return c.json(toWireTask(task));
 		} catch (error) {
 			return c.json({ error: (error as Error).message }, 400);
+		}
+	});
+
+	api.post("/tasks/:id/agent", async (c) => {
+		if (!agentHook) return c.json({ error: "agent hook not configured" }, 501);
+		const task = await getTask(c.req.param("id"), ctx);
+		if (!task) return c.json({ error: "not found" }, 404);
+		try {
+			const result = await postAgent(agentHook, task, {
+				tasksDir: ctx.config.tasksDir,
+				cwd: ctx.cwd,
+				schema: ctx.config.schema,
+			});
+			if (!result.ok) {
+				return c.json(
+					{ error: result.body || `hook returned ${result.status}` },
+					502,
+				);
+			}
+			return c.json({ ok: true });
+		} catch (err) {
+			return c.json({ error: (err as Error).message }, 502);
 		}
 	});
 

@@ -1,7 +1,7 @@
 import { useDraggable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
 import { useMemo, useRef } from "react";
-import type { WireTask } from "../shared/types.js";
+import type { AgentHookInfo, WireTask } from "../shared/types.js";
 import { ACCEPTANCE_HEADING_RE, parseAcceptance } from "./acceptance.js";
 import { Avatar, Icon, tagColor } from "./icons.js";
 
@@ -11,16 +11,33 @@ interface Props {
 	onSelect?: (id: string) => void;
 	onEdit?: (id: string) => void;
 	onDelete?: (id: string) => void;
+	agentHook?: AgentHookInfo | null;
+	onAgent?: (id: string) => void;
 }
 
 const CLICK_THRESHOLD_PX = 5;
 
-export function Card({ task, overlay, onSelect, onEdit, onDelete }: Props): JSX.Element {
+export function Card({
+	task,
+	overlay,
+	onSelect,
+	onEdit,
+	onDelete,
+	agentHook,
+	onAgent,
+}: Props): JSX.Element {
 	if (overlay) {
 		return <CardContent task={task} className="card overlay" />;
 	}
 	return (
-		<DraggableCard task={task} onSelect={onSelect} onEdit={onEdit} onDelete={onDelete} />
+		<DraggableCard
+			task={task}
+			onSelect={onSelect}
+			onEdit={onEdit}
+			onDelete={onDelete}
+			agentHook={agentHook}
+			onAgent={onAgent}
+		/>
 	);
 }
 
@@ -29,11 +46,15 @@ function DraggableCard({
 	onSelect,
 	onEdit,
 	onDelete,
+	agentHook,
+	onAgent,
 }: {
 	task: WireTask;
 	onSelect?: (id: string) => void;
 	onEdit?: (id: string) => void;
 	onDelete?: (id: string) => void;
+	agentHook?: AgentHookInfo | null;
+	onAgent?: (id: string) => void;
 }): JSX.Element {
 	const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
 		id: task.id,
@@ -71,6 +92,20 @@ function DraggableCard({
 		>
 			<CardContent task={task} className={`card ${isDragging ? "dragging" : ""}`} />
 			<div className="card-actions" onPointerDown={stop} onMouseDown={stop}>
+				{agentHook?.enabled ? (
+					<button
+						type="button"
+						className="card-action agent"
+						title={`Send to ${agentHook.label}`}
+						aria-label={`Send to ${agentHook.label}`}
+						onClick={(e) => {
+							stop(e);
+							onAgent?.(task.id);
+						}}
+					>
+						{agentHook.label}
+					</button>
+				) : null}
 				<button
 					type="button"
 					className="card-action"

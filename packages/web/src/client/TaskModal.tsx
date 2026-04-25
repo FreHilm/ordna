@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { OrdnaConfig, WireTask } from "../shared/types.js";
+import type { AgentHookInfo, OrdnaConfig, WireTask } from "../shared/types.js";
 import {
 	ACCEPTANCE_HEADING_RE,
 	type AcceptanceItem,
@@ -19,6 +19,8 @@ interface Props {
 	onClose: () => void;
 	onSaved: (task: WireTask) => void;
 	onDelete: (id: string) => void;
+	agentHook?: AgentHookInfo | null;
+	onAgent?: (id: string) => void;
 }
 
 type Priority = "high" | "medium" | "low";
@@ -80,6 +82,8 @@ export function TaskModal({
 	onClose,
 	onSaved,
 	onDelete,
+	agentHook,
+	onAgent,
 }: Props): JSX.Element {
 	const [editing, setEditing] = useState<boolean>(Boolean(startInEdit));
 	const [draft, setDraft] = useState<Draft>(() => toDraft(task));
@@ -158,6 +162,16 @@ export function TaskModal({
 						in <strong>{task.status}</strong>
 					</span>
 					<div className="modal-actions">
+						{agentHook?.enabled ? (
+							<button
+								type="button"
+								className="btn btn-agent"
+								title={`Send task to ${agentHook.label}`}
+								onClick={() => onAgent?.(task.id)}
+							>
+								{agentHook.label}
+							</button>
+						) : null}
 						<button
 							type="button"
 							className="btn-icon"

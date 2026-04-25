@@ -9,7 +9,7 @@ import {
 	useSensors,
 } from "@dnd-kit/core";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { OrdnaConfig, WireTask, WsEvent } from "../shared/types.js";
+import type { AgentHookInfo, UiConfig, WireTask, WsEvent } from "../shared/types.js";
 import { api } from "./api.js";
 import { Card } from "./Card.js";
 import { Cheatsheet } from "./Cheatsheet.js";
@@ -44,7 +44,7 @@ function loadTheme(): Theme {
 }
 
 export function App(): JSX.Element {
-	const [config, setConfig] = useState<OrdnaConfig | null>(null);
+	const [config, setConfig] = useState<UiConfig | null>(null);
 	const [tasks, setTasks] = useState<WireTask[]>([]);
 	const [query, setQuery] = useState("");
 	const [toast, setToast] = useState<{ message: string; kind: "info" | "error" } | null>(null);
@@ -212,6 +212,22 @@ export function App(): JSX.Element {
 	};
 
 	const activeTask = activeId ? tasks.find((t) => t.id === activeId) ?? null : null;
+
+	const agentHook: AgentHookInfo | null = config?.agentHook ?? null;
+
+	const handleAgent = useCallback(
+		async (id: string): Promise<void> => {
+			if (!agentHook?.enabled) return;
+			try {
+				await api.agent(id);
+				setToast({ message: `Sent ${id} to ${agentHook.label}`, kind: "info" });
+			} catch (error) {
+				setToast({ message: (error as Error).message, kind: "error" });
+			}
+			window.setTimeout(() => setToast(null), 3000);
+		},
+		[agentHook],
+	);
 
 	const handleCreate = async (title: string): Promise<void> => {
 		try {
@@ -420,6 +436,8 @@ export function App(): JSX.Element {
 										setOpenInEdit(true);
 									}}
 									onDelete={(id) => setConfirmDeleteId(id)}
+									agentHook={agentHook}
+									onAgent={handleAgent}
 								/>
 							))}
 						</div>
@@ -457,6 +475,8 @@ export function App(): JSX.Element {
 									setOpenInEdit(false);
 									setConfirmDeleteId(id);
 								}}
+								agentHook={agentHook}
+								onAgent={handleAgent}
 							/>
 						);
 					})()

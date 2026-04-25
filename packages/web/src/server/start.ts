@@ -6,6 +6,7 @@ import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Hono } from "hono";
+import { loadAgentHook } from "./agent.js";
 import { buildApiRoutes } from "./routes.js";
 import { toWireTask, type WsEvent } from "../shared/types.js";
 
@@ -45,7 +46,8 @@ export async function runWeb(options: RunWebOptions = {}): Promise<RunWebHandle>
 	const app = new Hono();
 	const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 
-	app.route("/api", buildApiRoutes(ctx));
+	const agentHook = loadAgentHook();
+	app.route("/api", buildApiRoutes(ctx, agentHook));
 
 	type Client = { send: (data: string) => void };
 	const clients = new Set<Client>();

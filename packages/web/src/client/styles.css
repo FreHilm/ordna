@@ -720,6 +720,33 @@ select {
 	border-color: var(--rose);
 }
 
+.card-action.agent {
+	color: var(--accent);
+	border-color: var(--accent-line);
+	background: var(--accent-soft);
+}
+.card-action.agent:hover {
+	color: var(--accent-fg);
+	background: var(--accent);
+	border-color: var(--accent);
+}
+
+.btn-agent {
+	height: 28px;
+	padding: 0 12px;
+	border-radius: var(--r-sm);
+	font-size: 12.5px;
+	font-weight: 600;
+	background: var(--accent);
+	color: var(--accent-fg);
+	border: 1px solid var(--accent);
+	box-shadow: var(--shadow-sm);
+}
+.btn-agent:hover {
+	background: var(--accent-2);
+	color: var(--accent-fg);
+}
+
 /* ---------- Avatar ---------- */
 .avatar {
 	display: inline-flex;

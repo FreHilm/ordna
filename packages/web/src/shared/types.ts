@@ -2,6 +2,15 @@ import type { OrdnaConfig, Task, TaskCreateInput, TaskUpdateInput } from "@ordna
 
 export type { OrdnaConfig, Task, TaskCreateInput, TaskUpdateInput };
 
+export interface AgentHookInfo {
+	enabled: boolean;
+	label: string;
+}
+
+export type UiConfig = OrdnaConfig & {
+	agentHook: AgentHookInfo | null;
+};
+
 export type WireTask = Omit<Task, "rawContent">;
 
 export type WsEvent =

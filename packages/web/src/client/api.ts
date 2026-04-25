@@ -1,4 +1,4 @@
-import type { OrdnaConfig, WireTask } from "../shared/types.js";
+import type { UiConfig, WireTask } from "../shared/types.js";
 
 async function json<T>(res: Response): Promise<T> {
 	if (!res.ok) {
@@ -16,7 +16,7 @@ async function json<T>(res: Response): Promise<T> {
 }
 
 export const api = {
-	config: (): Promise<OrdnaConfig> => fetch("/api/config").then((r) => json<OrdnaConfig>(r)),
+	config: (): Promise<UiConfig> => fetch("/api/config").then((r) => json<UiConfig>(r)),
 	list: (): Promise<WireTask[]> => fetch("/api/tasks").then((r) => json<WireTask[]>(r)),
 	create: (input: { title: string }): Promise<WireTask> =>
 		fetch("/api/tasks", {
@@ -40,4 +40,8 @@ export const api = {
 		fetch(`/api/tasks/${encodeURIComponent(id)}`, { method: "DELETE" }).then((r) => {
 			if (!r.ok) throw new Error(r.statusText);
 		}),
+	agent: (id: string): Promise<{ ok: true }> =>
+		fetch(`/api/tasks/${encodeURIComponent(id)}/agent`, { method: "POST" }).then((r) =>
+			json<{ ok: true }>(r),
+		),
 };

@@ -12,6 +12,7 @@ import {
 } from "@ordna/core";
 import { Box, Text, useApp, useInput, useStdin } from "ink";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { type AgentHookConfig, loadAgentHook, sendAgent } from "../agent.js";
 import { Column } from "./Column.js";
 import { useTerminalSize } from "./hooks.js";
 import { SelectPrompt } from "./SelectPrompt.js";
@@ -71,6 +72,7 @@ export function App(): React.JSX.Element {
 	const [focus, setFocus] = useState<Focus>("board");
 	const [sidebarFocusedKey, setSidebarFocusedKey] = useState<string | null>(null);
 	const [scrollOffsets, setScrollOffsets] = useState<Record<string, number>>({});
+	const [agentHook] = useState<AgentHookConfig | null>(() => loadAgentHook());
 
 	const statuses = ctx.config.statuses;
 
@@ -198,6 +200,24 @@ export function App(): React.JSX.Element {
 		}
 	};
 
+	const triggerAgent = async (task: Task): Promise<void> => {
+		if (!agentHook) return;
+		try {
+			const result = await sendAgent(agentHook, task, {
+				tasksDir: ctx.config.tasksDir,
+				cwd: ctx.cwd,
+				schema: ctx.config.schema,
+			});
+			if (!result.ok) {
+				flashToast(`${agentHook.label} hook failed (${result.status})`);
+				return;
+			}
+			flashToast(`Sent ${task.id} to ${agentHook.label}`);
+		} catch (error) {
+			flashToast((error as Error).message);
+		}
+	};
+
 	const applySidebarFocused = (): void => {
 		if (sidebarFocusedKey === null) return;
 		const row = flatRows.find((r) => rowKey(r.item) === sidebarFocusedKey);
@@ -304,6 +324,8 @@ export function App(): React.JSX.Element {
 				launchEditor(selectedTask);
 			} else if (input === "x" && selectedTask) {
 				void archiveSelected(selectedTask);
+			} else if (input === "g" && selectedTask && agentHook) {
+				void triggerAgent(selectedTask);
 			} else if (input === "/") {
 				setMode({ kind: "search" });
 			} else if (key.escape && searchQuery) {
@@ -369,8 +391,14 @@ export function App(): React.JSX.Element {
 	const bodyHeight = Math.max(5, termRows - 3);
 	const boardHeight = Math.max(5, bodyHeight - subbarHeight - 1);
 
-	const colCount = Math.max(1, boardStatuses.length);
-	const colWidth = Math.max(24, Math.floor(boardAreaWidth / colCount));
+	// Normal board column width = boardAreaWidth evenly split across configured statuses.
+	// Archive view reuses this width (one column, same size as a regular lane).
+	// Other views (all / status / tag) stretch columns to fill the board area evenly.
+	const normalColCount = Math.max(1, statuses.length);
+	const normalColWidth = Math.max(24, Math.floor(boardAreaWidth / normalColCount));
+	const isArchive = filter.kind === "archived";
+	const stretchedColCount = Math.max(1, boardStatuses.length);
+	const stretchedColWidth = Math.max(24, Math.floor(boardAreaWidth / stretchedColCount));
 
 	// Each column body has (boardHeight - 2) usable rows after title + bottom border.
 	const columnBodyLines = Math.max(1, boardHeight - 2);
@@ -432,6 +460,14 @@ export function App(): React.JSX.Element {
 				const selectedRelativeIndex = isFocusedCol
 					? rowIndex - layout.offset
 					: -1;
+				let w: number;
+				if (isArchive) {
+					w = normalColWidth;
+				} else if (idx === boardStatuses.length - 1) {
+					w = boardAreaWidth - stretchedColWidth * (boardStatuses.length - 1);
+				} else {
+					w = stretchedColWidth;
+				}
 				return (
 					<Column
 						key={s}
@@ -444,11 +480,7 @@ export function App(): React.JSX.Element {
 						focused={isFocusedCol}
 						selectedRelativeIndex={selectedRelativeIndex}
 						grabbedId={grabbedId}
-						width={
-							idx === boardStatuses.length - 1
-								? boardAreaWidth - colWidth * (boardStatuses.length - 1)
-								: colWidth
-						}
+						width={w}
 						height={boardHeight}
 					/>
 				);
@@ -528,6 +560,7 @@ export function App(): React.JSX.Element {
 		{ keys: "a", label: "assign" },
 		{ keys: "e", label: "edit" },
 		{ keys: "x", label: "archive" },
+		...(agentHook ? [{ keys: "g", label: agentHook.label.toLowerCase() }] : []),
 		{ keys: "/", label: "find" },
 		{ keys: "q", label: "quit" },
 	];

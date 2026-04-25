@@ -1,5 +1,5 @@
 import { useDroppable } from "@dnd-kit/core";
-import type { WireTask } from "../shared/types.js";
+import type { AgentHookInfo, WireTask } from "../shared/types.js";
 import { Card } from "./Card.js";
 
 export const COLUMN_COLORS = ["slate", "blue", "amber", "violet", "emerald"] as const;
@@ -26,6 +26,8 @@ interface Props {
 	onSelect?: (id: string) => void;
 	onEdit?: (id: string) => void;
 	onDelete?: (id: string) => void;
+	agentHook?: AgentHookInfo | null;
+	onAgent?: (id: string) => void;
 }
 
 export function Column({
@@ -35,18 +37,20 @@ export function Column({
 	onSelect,
 	onEdit,
 	onDelete,
+	agentHook,
+	onAgent,
 }: Props): JSX.Element {
 	const { setNodeRef, isOver } = useDroppable({ id: `column:${status}` });
 
 	return (
-		<div className="col">
-			<div className="col-head">
-				<span className={`col-dot ${color}`} />
-				<span className="col-title">{status}</span>
-				<span className="col-count">{tasks.length}</span>
+		<div ref={setNodeRef} className={`column ${isOver ? "drop-target" : ""}`}>
+			<div className="column-header">
+				<span className={`dot status-dot ${status}`} />
+				<span className="title">{status}</span>
+				<span className="count">{tasks.length}</span>
 			</div>
-			<div ref={setNodeRef} className={`col-body ${isOver ? "drop-active" : ""}`}>
-				{tasks.length === 0 ? <div className="col-empty">Drop tasks here</div> : null}
+			<div className="column-body">
+				{tasks.length === 0 ? <div className="empty">Drop tasks here</div> : null}
 				{tasks.map((task) => (
 					<Card
 						key={task.id}
@@ -54,6 +58,8 @@ export function Column({
 						onSelect={onSelect}
 						onEdit={onEdit}
 						onDelete={onDelete}
+						agentHook={agentHook}
+						onAgent={onAgent}
 					/>
 				))}
 			</div>
