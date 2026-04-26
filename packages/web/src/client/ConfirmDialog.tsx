@@ -5,9 +5,11 @@ interface Props {
 	message: string;
 	confirmLabel?: string;
 	cancelLabel?: string;
+	secondaryLabel?: string;
 	danger?: boolean;
 	onConfirm: () => void;
 	onCancel: () => void;
+	onSecondary?: () => void;
 }
 
 export function ConfirmDialog({
@@ -15,9 +17,11 @@ export function ConfirmDialog({
 	message,
 	confirmLabel = "Confirm",
 	cancelLabel = "Cancel",
+	secondaryLabel,
 	danger,
 	onConfirm,
 	onCancel,
+	onSecondary,
 }: Props): JSX.Element {
 	const confirmRef = useRef<HTMLButtonElement>(null);
 
@@ -43,6 +47,11 @@ export function ConfirmDialog({
 					<button type="button" onClick={onCancel}>
 						{cancelLabel}
 					</button>
+					{secondaryLabel && onSecondary ? (
+						<button type="button" onClick={onSecondary}>
+							{secondaryLabel}
+						</button>
+					) : null}
 					<button
 						ref={confirmRef}
 						type="button"

@@ -26,12 +26,14 @@ import {
 } from "./Sidebar.js";
 import { Subbar } from "./Subbar.js";
 import { TaskDetail } from "./TaskDetail.js";
+import { TaskEditor } from "./TaskEditor.js";
 import { TextPrompt } from "./TextPrompt.js";
 import { theme } from "./theme.js";
 
 type Mode =
 	| { kind: "browse" }
 	| { kind: "detail"; task: Task }
+	| { kind: "edit"; task: Task; returnTo: "browse" | "detail" }
 	| { kind: "create" }
 	| { kind: "assign"; task: Task }
 	| { kind: "move"; task: Task }
@@ -328,6 +330,8 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 			} else if (input === "a" && selectedTask) {
 				setMode({ kind: "assign", task: selectedTask });
 			} else if (input === "e" && selectedTask) {
+				setMode({ kind: "edit", task: selectedTask, returnTo: "browse" });
+			} else if (input === "E" && selectedTask) {
 				launchEditor(selectedTask);
 			} else if (input === "x" && selectedTask) {
 				void archiveSelected(selectedTask);
@@ -566,6 +570,7 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 		{ keys: "m", label: "move" },
 		{ keys: "a", label: "assign" },
 		{ keys: "e", label: "edit" },
+		{ keys: "E", label: "$EDITOR" },
 		{ keys: "x", label: "archive" },
 		...(agentHook ? [{ keys: "g", label: agentHook.label.toLowerCase() }] : []),
 		{ keys: "/", label: "find" },
@@ -618,6 +623,38 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 						>
 							{overlay}
 						</Box>
+					) : mode.kind === "edit" ? (
+						<Box
+							height={boardHeight}
+							width={boardAreaWidth}
+							alignItems="center"
+							justifyContent="center"
+						>
+							<TaskEditor
+								task={mode.task}
+								ctx={ctx}
+								onClose={() => {
+									if (mode.kind !== "edit") return;
+									if (mode.returnTo === "detail") {
+										setMode({ kind: "detail", task: mode.task });
+									} else {
+										setMode({ kind: "browse" });
+									}
+								}}
+								onSaved={(updated) => {
+									flashToast(`Saved ${updated.id}`);
+									void reload();
+									if (mode.kind !== "edit") return;
+									if (mode.returnTo === "detail") {
+										setMode({ kind: "detail", task: updated });
+									} else {
+										setMode({ kind: "browse" });
+									}
+								}}
+								width={popupWidth}
+								height={popupHeight}
+							/>
+						</Box>
 					) : showDetail && mode.kind === "detail" ? (
 						<Box
 							height={boardHeight}
@@ -629,6 +666,11 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 								task={mode.task}
 								onClose={() => setMode({ kind: "browse" })}
 								onEdit={() => {
+									if (mode.kind !== "detail") return;
+									setMode({ kind: "edit", task: mode.task, returnTo: "detail" });
+								}}
+								onEditExternal={() => {
+									if (mode.kind !== "detail") return;
 									const target = mode.task;
 									setMode({ kind: "browse" });
 									launchEditor(target);
