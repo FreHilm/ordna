@@ -77,6 +77,9 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 	const [filter, setFilter] = useState<SidebarItem>({ kind: "all" });
 	const [focus, setFocus] = useState<Focus>("board");
 	const [sidebarFocusedKey, setSidebarFocusedKey] = useState<string | null>(null);
+	const [sidebarPinned, setSidebarPinned] = useState<boolean>(true);
+	const [sidebarPeek, setSidebarPeek] = useState<boolean>(false);
+	const sidebarVisible = sidebarPinned || sidebarPeek;
 	const [scrollOffsets, setScrollOffsets] = useState<Record<string, number>>({});
 	const [agentHook] = useState<AgentHookConfig | null>(() => {
 		if (agentHookProp !== undefined) return agentHookProp;
@@ -234,6 +237,7 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 			setFilter(row.item);
 			setColumnIndex(0);
 			setRowIndex(0);
+			if (sidebarPeek) setSidebarPeek(false);
 			setFocus("board");
 		}
 	};
@@ -244,9 +248,11 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 
 			if (key.tab) {
 				if (focus === "board") {
+					if (!sidebarPinned) setSidebarPeek(true);
 					setFocus("sidebar");
 					setSidebarFocusedKey(rowKey(filter));
 				} else {
+					if (sidebarPeek) setSidebarPeek(false);
 					setFocus("board");
 				}
 				return;
@@ -254,6 +260,7 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 
 			if (focus === "sidebar") {
 				if (key.escape) {
+					if (sidebarPeek) setSidebarPeek(false);
 					setFocus("board");
 					return;
 				}
@@ -337,6 +344,9 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 				void archiveSelected(selectedTask);
 			} else if (input === "g" && selectedTask && agentHook) {
 				void triggerAgent(selectedTask);
+			} else if (input === "f") {
+				setSidebarPinned((p) => !p);
+				setSidebarPeek(false);
 			} else if (input === "/") {
 				setMode({ kind: "search" });
 			} else if (key.escape && searchQuery) {
@@ -396,7 +406,7 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 		[statuses],
 	);
 
-	const sidebarWidth = SIDEBAR_WIDTH;
+	const sidebarWidth = sidebarVisible ? SIDEBAR_WIDTH : 0;
 	const boardAreaWidth = Math.max(30, termCols - sidebarWidth);
 	const subbarHeight = 1;
 	const bodyHeight = Math.max(5, termRows - 3);
@@ -562,6 +572,7 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 	];
 	const browseHints: Hint[] = [
 		{ keys: "Tab", label: "sidebar" },
+		{ keys: "f", label: sidebarPinned ? "hide filter" : "show filter" },
 		{ keys: "←/→", label: "cols" },
 		{ keys: "↑/↓", label: "tasks" },
 		{ keys: "Space", label: "grab" },
@@ -595,16 +606,18 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 			<Box width={termCols} height={1} />
 
 			<Box flexDirection="row" width={termCols} height={bodyHeight}>
-				<Box width={sidebarWidth} height={bodyHeight}>
-					<Sidebar
-						rows={sidebarRows}
-						active={filter}
-						focusedKey={focus === "sidebar" ? sidebarFocusedKey : null}
-						focused={focus === "sidebar"}
-						width={sidebarWidth}
-						height={bodyHeight}
-					/>
-				</Box>
+				{sidebarVisible ? (
+					<Box width={sidebarWidth} height={bodyHeight}>
+						<Sidebar
+							rows={sidebarRows}
+							active={filter}
+							focusedKey={focus === "sidebar" ? sidebarFocusedKey : null}
+							focused={focus === "sidebar"}
+							width={sidebarWidth}
+							height={bodyHeight}
+						/>
+					</Box>
+				) : null}
 
 				<Box flexDirection="column" width={boardAreaWidth} height={bodyHeight}>
 					<Subbar
