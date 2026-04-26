@@ -1,4 +1,4 @@
-import { Box, Text } from "ink";
+import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
 import React, { useState } from "react";
 import { theme } from "./theme.js";
@@ -17,6 +17,10 @@ export function TextPrompt({
 	onCancel,
 }: Props): React.JSX.Element {
 	const [value, setValue] = useState(initialValue);
+
+	useInput((_input, key) => {
+		if (key.escape) onCancel();
+	});
 
 	return (
 		<Box
