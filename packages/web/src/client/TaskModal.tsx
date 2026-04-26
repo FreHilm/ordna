@@ -9,6 +9,7 @@ import {
 import { AcceptanceList } from "./AcceptanceList.js";
 import { AcceptanceView } from "./AcceptanceView.js";
 import { api } from "./api.js";
+import { ConfirmDialog } from "./ConfirmDialog.js";
 import { Avatar, Icon, tagColor } from "./icons.js";
 import { TagInput } from "./TagInput.js";
 
@@ -75,6 +76,34 @@ function sectionsForSave(draft: Draft): EditableSection[] {
 	);
 }
 
+function arrayEq(a: readonly string[], b: readonly string[]): boolean {
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return false;
+	return true;
+}
+
+function isDirty(task: WireTask, draft: Draft): boolean {
+	if (draft.title.trim() !== task.title) return true;
+	if (draft.status !== task.status) return true;
+	const assignee = draft.assignee.trim() === "" ? null : draft.assignee.trim();
+	if (assignee !== (task.assignee ?? null)) return true;
+	const priority = draft.priority === "" ? null : draft.priority;
+	if (priority !== (task.priority ?? null)) return true;
+	if (!arrayEq(draft.tags, task.tags)) return true;
+	if (!arrayEq(draft.depends_on, task.depends_on)) return true;
+	const next = sectionsForSave(draft);
+	if (next.length !== task.sections.length) return true;
+	for (let i = 0; i < next.length; i += 1) {
+		const a = next[i];
+		const b = task.sections[i];
+		if (!a || !b) return true;
+		if (a.heading !== b.heading || a.level !== b.level || a.content !== b.content) {
+			return true;
+		}
+	}
+	return false;
+}
+
 export function TaskModal({
 	task,
 	config,
@@ -89,18 +118,40 @@ export function TaskModal({
 	const [draft, setDraft] = useState<Draft>(() => toDraft(task));
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [pendingExit, setPendingExit] = useState<null | "close" | "exit-edit">(null);
 	// Tracks whether this modal session was opened directly into edit mode
 	// (e.g. via the card's Edit button). Save / Cancel close the modal in that
 	// case; otherwise they fall back to view mode.
 	const closeAfterEdit = useRef<boolean>(Boolean(startInEdit));
 
+	const dirty = editing && isDirty(task, draft);
+
+	const requestClose = (): void => {
+		if (editing && dirty) setPendingExit("close");
+		else onClose();
+	};
+
+	const requestExitEdit = (): void => {
+		if (!editing) return;
+		if (dirty) {
+			setPendingExit("exit-edit");
+		} else if (closeAfterEdit.current) {
+			onClose();
+		} else {
+			setEditing(false);
+		}
+	};
+
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent): void => {
-			if (e.key === "Escape") onClose();
+			if (e.key !== "Escape") return;
+			if (pendingExit !== null) return;
+			if (editing && dirty) setPendingExit("close");
+			else onClose();
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
-	}, [onClose]);
+	}, [editing, dirty, pendingExit, onClose]);
 
 	useEffect(() => {
 		setDraft(toDraft(task));
@@ -169,7 +220,7 @@ export function TaskModal({
 	);
 
 	return (
-		<div className="scrim" onClick={onClose}>
+		<div className="scrim" onClick={requestClose}>
 			<div className="modal" onClick={(e) => e.stopPropagation()}>
 				<div className="modal-head">
 					<span className="modal-id">{task.id}</span>
@@ -190,13 +241,10 @@ export function TaskModal({
 						<button
 							type="button"
 							className="btn-icon"
-							title={editing ? "Done editing" : "Edit"}
+							title={editing ? "Exit edit" : "Edit"}
 							onClick={() => {
-								if (editing) {
-									void onSave();
-								} else {
-									setEditing(true);
-								}
+								if (editing) requestExitEdit();
+								else setEditing(true);
 							}}
 						>
 							<Icon.Edit />
@@ -209,7 +257,7 @@ export function TaskModal({
 						>
 							<Icon.Trash />
 						</button>
-						<button type="button" className="btn-icon" title="Close" onClick={onClose}>
+						<button type="button" className="btn-icon" title="Close" onClick={requestClose}>
 							<Icon.X />
 						</button>
 					</div>
@@ -467,6 +515,35 @@ export function TaskModal({
 					</div>
 				) : null}
 			</div>
+			{pendingExit !== null ? (
+				<ConfirmDialog
+					title="Unsaved changes"
+					message="You have unsaved changes to this task. Save them, discard them, or keep editing?"
+					confirmLabel="Save"
+					secondaryLabel="Don't save"
+					cancelLabel="Cancel"
+					onCancel={() => setPendingExit(null)}
+					onSecondary={() => {
+						const intent = pendingExit;
+						setPendingExit(null);
+						setDraft(toDraft(task));
+						setError(null);
+						if (intent === "close") {
+							onClose();
+						} else if (closeAfterEdit.current) {
+							onClose();
+						} else {
+							setEditing(false);
+						}
+					}}
+					onConfirm={() => {
+						const intent = pendingExit;
+						setPendingExit(null);
+						if (intent === "close") closeAfterEdit.current = true;
+						void onSave();
+					}}
+				/>
+			) : null}
 		</div>
 	);
 }
