@@ -704,8 +704,8 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 				</Box>
 			</Box>
 
-			<Box paddingX={1} width={termCols}>
-				<Text wrap="truncate-end">
+			<Box paddingX={1} width={termCols} flexShrink={0}>
+				<Text wrap="wrap">
 					{footerPrefix ? (
 						<Text color={theme.textMuted}>{footerPrefix}</Text>
 					) : null}
@@ -717,7 +717,7 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 							<Text color={theme.textDim} bold>
 								{hint.keys}
 							</Text>
-							<Text color={theme.textMuted}>{` ${hint.label}`}</Text>
+							<Text color={theme.textMuted}>{` ${hint.label}`}</Text>
 						</Text>
 					))}
 				</Text>
