@@ -42,7 +42,8 @@ Launch with `ordna` or `ordna board`. Three-pane layout: topbar · filter sideba
 
 | Key            | Action                                   |
 |----------------|------------------------------------------|
-| `Tab`          | Toggle focus between sidebar and board   |
+| `Tab`          | Toggle focus between sidebar and board (auto-peeks the sidebar if hidden, auto-hides on tab away) |
+| `f`            | Hide / show the filter sidebar           |
 | `← → / h l`    | Switch column                            |
 | `↑ ↓ / j k`    | Select task / sidebar row                |
 | `Enter`        | Open task detail popup / apply filter    |
