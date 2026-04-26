@@ -7,6 +7,7 @@ interface Props {
 	task: Task;
 	onClose: () => void;
 	onEdit: () => void;
+	onEditExternal?: () => void;
 	width: number;
 	height: number;
 }
@@ -15,12 +16,14 @@ export function TaskDetail({
 	task,
 	onClose,
 	onEdit,
+	onEditExternal,
 	width,
 	height,
 }: Props): React.JSX.Element {
 	useInput((input, key) => {
 		if (key.escape || input === "q") onClose();
 		else if (input === "e") onEdit();
+		else if (input === "E" && onEditExternal) onEditExternal();
 	});
 
 	const innerWidth = Math.max(10, width - 4);
@@ -94,7 +97,9 @@ export function TaskDetail({
 
 			<Box marginTop={1}>
 				<Text color={theme.textMuted} italic>
-					e edit · Esc / q close
+					{onEditExternal
+						? "e edit · E $EDITOR · Esc / q close"
+						: "e edit · Esc / q close"}
 				</Text>
 			</Box>
 		</Box>
