@@ -587,6 +587,8 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 				{toast ? <Text color={theme.accent2}>{toast}</Text> : null}
 			</Box>
 
+			<Box width={termCols} height={1} />
+
 			<Box flexDirection="row" width={termCols} height={bodyHeight}>
 				<Box width={sidebarWidth} height={bodyHeight}>
 					<Sidebar
