@@ -1,0 +1,16 @@
+node_modules/
+dist/
+dist-client/
+.DS_Store
+*.log
+coverage/
+.vitest-cache/
+
+# Local agent / editor state
+.claude/
+
+# Local dogfood data (created by `ordna init` against this repo)
+.ordna/
+
+# pnpm pack output
+*.tgz

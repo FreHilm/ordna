@@ -1,6 +1,6 @@
 {
   "name": "@frehilm/ordna-cli",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "The `ordna` CLI and Ink-based Kanban TUI for Ordna. Re-exports the core API.",
   "license": "MIT",
   "author": "FreHilm <1584617+FreHilm@users.noreply.github.com>",

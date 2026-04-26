@@ -1,6 +1,6 @@
 {
   "name": "@frehilm/ordna-core",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Git-native task management — pure data layer. Tasks are markdown files; the board is the directory.",
   "license": "MIT",
   "author": "FreHilm <1584617+FreHilm@users.noreply.github.com>",
