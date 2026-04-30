@@ -66,6 +66,29 @@ Each is a regular markdown file. Edit them in `$EDITOR` and the board updates li
 
 The two UI packages **re-export the full core API**. So if you want both data access and a UI, you only ever install one Ordna package.
 
+## Agent skill (AGENTS.md)
+
+Ordna ships a vendor-neutral [`AGENTS.md`](packages/cli/templates/AGENTS.md)
+describing the task file format, `.ordna/config.yaml`, and the `ordna` CLI.
+Drop it into any project and most coding agents (Claude, Cursor, Copilot,
+Codex, …) will pick it up automatically.
+
+Two ways to install:
+
+```bash
+# 1) Via the CLI (uses the bundled template)
+ordna skill install                              # writes ./AGENTS.md
+ordna skill install --out docs/AGENTS.md         # custom path
+ordna skill install --force                      # overwrite existing
+
+# 2) Direct fetch — give the agent a URL, no Ordna install required
+curl -fsSL https://raw.githubusercontent.com/FreHilm/ordna/main/packages/cli/templates/AGENTS.md \
+  -o AGENTS.md
+
+# Or via the CLI's --from flag
+ordna skill install --from https://raw.githubusercontent.com/FreHilm/ordna/main/packages/cli/templates/AGENTS.md
+```
+
 ## Host integration (IDE / Electron / agent runners)
 
 Ordna is built to be embedded. Both UIs detect a single environment variable (or programmatic option) and surface a button that POSTs the full task to your host process — your IDE then runs an agent on it.
