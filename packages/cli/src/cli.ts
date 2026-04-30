@@ -7,6 +7,7 @@ import { runInit } from "./commands/init.js";
 import { runList } from "./commands/list.js";
 import { runMove } from "./commands/move.js";
 import { runShow } from "./commands/show.js";
+import { runSkillInstall } from "./commands/skill.js";
 import { runWebCommand } from "./commands/web.js";
 
 export function buildProgram(): Command {
@@ -77,6 +78,21 @@ export function buildProgram(): Command {
 		.option("-h, --host <host>", "host", "127.0.0.1")
 		.option("--no-open", "do not open browser")
 		.action((opts) => runWebCommand(opts));
+
+	const skill = program.command("skill").description("Manage the Ordna agent skill (AGENTS.md)");
+	skill
+		.command("install")
+		.description("Write the Ordna agent skill (AGENTS.md) into the current project")
+		.option("-o, --out <path>", "destination path (default: ./AGENTS.md)")
+		.option("--from <url>", "fetch the skill from a URL instead of the bundled template")
+		.option("-f, --force", "overwrite the destination if it already exists")
+		.action((opts) =>
+			runSkillInstall({
+				out: opts.out,
+				from: opts.from,
+				force: opts.force,
+			}),
+		);
 
 	program
 		.command("board")
