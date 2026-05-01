@@ -1,6 +1,6 @@
 {
   "name": "@frehilm/ordna-cli",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "The `ordna` CLI and Ink-based Kanban TUI for Ordna. Re-exports the core API.",
   "license": "MIT",
   "author": "FreHilm <1584617+FreHilm@users.noreply.github.com>",
@@ -32,8 +32,8 @@
     "dev": "tsx src/bin/ordna.ts"
   },
   "dependencies": {
-    "@frehilm/ordna-core": "workspace:*",
-    "@frehilm/ordna-web": "workspace:*",
+    "@frehilm/ordna-core": "workspace:^",
+    "@frehilm/ordna-web": "workspace:^",
     "commander": "^12.1.0",
     "ink": "^5.1.1",
     "ink-text-input": "^6.0.0",

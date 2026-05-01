@@ -1,8 +1,14 @@
 # Ordna
 
-> Project management as plain files. Your AI agent already knows how to read them.
+## A Kanban that lives inside your repo.
 
-Just markdown. The Kanban is the directory. Your editor and your agent open the same files.
+Ordna is a local-first, git-based task board you run from your terminal or your browser. No servers, no logins, no SaaS — just markdown files, plain commits, and an API your agents can drive.
+
+```bash
+npx @frehilm/ordna-cli ordna
+```
+
+**markdown tasks · works offline · branches as boards · TUI & Web · your data, your repo · agent-ready API**
 
 ```
 tasks/
@@ -13,9 +19,9 @@ tasks/
   config.yaml   # ← optional
 ```
 
-That's the whole schema. No database, no service account, no API key, no MCP. The CLI, TUI, and web UI all derive the board from these files.
+That's the whole schema. The CLI, TUI, and web UI all derive the board from these files.
 
-## Why
+## Built for the way you actually work
 
 External project-management tools sit outside your code. Tasks live in a database you don't own, under an account you can't fully back up, with access that breaks when the company folds or the plan changes. And they're invisible to AI agents unless you bolt on an integration that may or may not survive the next vendor pivot.
 
@@ -30,6 +36,14 @@ Built for the moment when half your collaborators are agents.
 - **Agent-native handoff.** When the user clicks "send to agent" (or hits `g` in the TUI), Ordna POSTs the full task as JSON to your IDE over plain HTTP. That's the entire integration surface.
 - **Three surfaces, one source of truth.** A polished TUI, a browser Kanban, or just the library. Pick whichever — they all read the same markdown.
 - **Backlog.md compatible.** Open existing [Backlog.md](https://github.com/MrLesk/Backlog.md) repos out of the box.
+
+## TUI
+
+<img alt="Ordna TUI — terminal Kanban with sidebar, columns, and footer hotkeys" src="docs/screenshots/ordna-tui.png" width="100%" /> 
+
+## Web
+
+<img alt="Ordna web — browser Kanban with drag-and-drop and task modal" src="docs/screenshots/ordna-web.png" width="100%" />
 
 ## Quick start
 

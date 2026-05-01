@@ -21,10 +21,10 @@ importers:
   packages/cli:
     dependencies:
       '@frehilm/ordna-core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../core
       '@frehilm/ordna-web':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../web
       commander:
         specifier: ^12.1.0
@@ -83,7 +83,7 @@ importers:
   packages/web:
     dependencies:
       '@frehilm/ordna-core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../core
       '@hono/node-server':
         specifier: ^1.13.8
