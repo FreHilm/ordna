@@ -24,7 +24,7 @@
   "bin": {
     "ordna": "./dist/bin/ordna.js"
   },
-  "files": ["dist"],
+  "files": ["dist", "templates"],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",

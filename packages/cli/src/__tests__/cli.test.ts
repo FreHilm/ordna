@@ -97,4 +97,32 @@ describe("ordna CLI", () => {
 		expect(r.code).toBe(1);
 		expect(r.stderr).toContain("not found");
 	});
+
+	it("skill install writes AGENTS.md from the bundled template", () => {
+		const skillCwd = mkdtempSync(join(tmpdir(), "ordna-skill-"));
+		const r = run(skillCwd, ["skill", "install"]);
+		expect(r.code).toBe(0);
+		expect(r.stdout).toContain("Installed Ordna agent skill");
+		const out = readFileSync(join(skillCwd, "AGENTS.md"), "utf8");
+		expect(out).toContain("Ordna — Agent Guide");
+		expect(out).toContain(".ordna/config.yaml");
+		expect(out).toContain("ordna create");
+	});
+
+	it("skill install refuses to overwrite without --force", () => {
+		const skillCwd = mkdtempSync(join(tmpdir(), "ordna-skill-"));
+		expect(run(skillCwd, ["skill", "install"]).code).toBe(0);
+		const blocked = run(skillCwd, ["skill", "install"]);
+		expect(blocked.code).toBe(1);
+		expect(blocked.stderr).toContain("refusing to overwrite");
+		const forced = run(skillCwd, ["skill", "install", "--force"]);
+		expect(forced.code).toBe(0);
+	});
+
+	it("skill install writes to a custom --out path and creates parent dirs", () => {
+		const skillCwd = mkdtempSync(join(tmpdir(), "ordna-skill-"));
+		const r = run(skillCwd, ["skill", "install", "--out", "docs/AGENTS.md"]);
+		expect(r.code).toBe(0);
+		expect(existsSync(join(skillCwd, "docs", "AGENTS.md"))).toBe(true);
+	});
 });
