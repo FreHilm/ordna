@@ -9,9 +9,16 @@ import {
 	watchTasks,
 	type StoreContext,
 	type Task,
+	type TaskEvent,
 } from "@frehilm/ordna-core";
 import { Box, Text, useApp, useInput, useStdin } from "ink";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+	startTransition,
+	useCallback,
+	useEffect,
+	useMemo,
+	useState,
+} from "react";
 import { type AgentHookConfig, loadAgentHook, sendAgent } from "../agent.js";
 import { Column } from "./Column.js";
 import { useTerminalSize } from "./hooks.js";
@@ -57,6 +64,29 @@ function flattenSidebarRows(rows: ReturnType<typeof buildSidebarRows>): SidebarR
 	return [...rows.views, ...rows.priorities, ...rows.tags];
 }
 
+// Insert-or-replace a task in the sorted list. If the task is already present
+// with identical rawContent, the previous array reference is returned so
+// React/Ink + the Card/Column memos bail out without re-rendering.
+function mergeTask(prev: Task[], task: Task): Task[] {
+	const idx = prev.findIndex((t) => t.id === task.id);
+	if (idx === -1) {
+		const next = [...prev, task];
+		next.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
+		return next;
+	}
+	const existing = prev[idx];
+	if (existing && existing.rawContent === task.rawContent) return prev;
+	const next = prev.slice();
+	next[idx] = task;
+	return next;
+}
+
+function removeTaskByPath(prev: Task[], filePath: string): Task[] {
+	const idx = prev.findIndex((t) => t.filePath === filePath);
+	if (idx === -1) return prev;
+	return prev.filter((_, i) => i !== idx);
+}
+
 export interface AppProps {
 	agentHook?: AgentHookConfig | null;
 }
@@ -88,21 +118,39 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 
 	const statuses = ctx.config.statuses;
 
-	const reload = useCallback(async (): Promise<void> => {
+	// Reload reads the whole tasks directory once. Used only for the initial
+	// mount and after `launchEditor` (where an external editor's atomic
+	// write may bypass chokidar). Steady-state changes flow through
+	// `applyEvent` instead.
+	const reload = useCallback(async (): Promise<Task[]> => {
 		const fresh = await listTasks(ctx);
 		setTasks(fresh);
 		setLoaded(true);
+		return fresh;
 	}, [ctx]);
+
+	// Watcher events are merged incrementally into state. `mergeTask` is
+	// idempotent: re-applying the same task (e.g., the chokidar event for
+	// our own write) returns the previous array reference, so memoized
+	// children skip rendering. Wrapped in `startTransition` so a burst of
+	// watcher events yields to user input.
+	const applyEvent = useCallback((event: TaskEvent): void => {
+		startTransition(() => {
+			if (event.type === "removed") {
+				setTasks((prev) => removeTaskByPath(prev, event.filePath));
+			} else {
+				setTasks((prev) => mergeTask(prev, event.task));
+			}
+		});
+	}, []);
 
 	useEffect(() => {
 		void reload();
-		const unsubscribe = watchTasks(ctx, () => {
-			void reload();
-		});
+		const unsubscribe = watchTasks(ctx, applyEvent);
 		return () => {
 			void unsubscribe();
 		};
-	}, [ctx, reload]);
+	}, [ctx, reload, applyEvent]);
 
 	const sidebarRows = useMemo(() => buildSidebarRows(tasks, statuses), [tasks, statuses]);
 	const flatRows = useMemo(() => flattenSidebarRows(sidebarRows), [sidebarRows]);
@@ -188,11 +236,14 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 			return;
 		}
 		try {
-			await moveTask(grabbedId, targetStatus, ctx);
-			await reload();
+			const updated = await moveTask(grabbedId, targetStatus, ctx);
+			// Optimistic merge — the watcher's "changed" event arrives shortly
+			// after and is a no-op (rawContent matches). Compute next state
+			// imperatively too so cursor positioning uses the same view.
+			const next = mergeTask(tasks, updated);
+			setTasks(next);
 			setColumnIndex(targetIndex);
-			const fresh = await listTasks(ctx);
-			const group = fresh.filter((t) => t.status === targetStatus);
+			const group = next.filter((t) => t.status === targetStatus);
 			const nextIdx = group.findIndex((t) => t.id === grabbedId);
 			const clampedIdx = Math.max(0, nextIdx);
 			setRowIndex(clampedIdx);
@@ -204,9 +255,9 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 
 	const archiveSelected = async (task: Task): Promise<void> => {
 		try {
-			await updateTask(task.id, { status: ARCHIVED_STATUS }, ctx);
+			const updated = await updateTask(task.id, { status: ARCHIVED_STATUS }, ctx);
+			setTasks((prev) => mergeTask(prev, updated));
 			flashToast(`${task.id} archived`);
-			await reload();
 		} catch (error) {
 			flashToast((error as Error).message);
 		}
@@ -359,8 +410,8 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 	const onCreate = async (title: string): Promise<void> => {
 		try {
 			const task = await createTask({ title }, ctx);
+			setTasks((prev) => mergeTask(prev, task));
 			flashToast(`Created ${task.id}`);
-			await reload();
 		} catch (error) {
 			flashToast((error as Error).message);
 		}
@@ -370,11 +421,11 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 	const onMove = async (targetStatus: string): Promise<void> => {
 		if (mode.kind !== "move") return;
 		try {
-			await moveTask(mode.task.id, targetStatus, ctx);
+			const updated = await moveTask(mode.task.id, targetStatus, ctx);
+			const next = mergeTask(tasks, updated);
+			setTasks(next);
 			flashToast(`${mode.task.id} → ${targetStatus}`);
-			await reload();
-			const fresh = await listTasks(ctx);
-			const group = fresh.filter((t) => t.status === targetStatus);
+			const group = next.filter((t) => t.status === targetStatus);
 			const nextIdx = group.findIndex((t) => t.id === mode.task.id);
 			if (nextIdx >= 0) {
 				const targetColIdx = boardStatuses.indexOf(targetStatus);
@@ -392,9 +443,9 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 		if (mode.kind !== "assign") return;
 		try {
 			const value = name.trim().length === 0 ? null : name.trim();
-			await updateTask(mode.task.id, { assignee: value }, ctx);
+			const updated = await updateTask(mode.task.id, { assignee: value }, ctx);
+			setTasks((prev) => mergeTask(prev, updated));
 			flashToast(`${mode.task.id} ${value ? `→ @${value}` : "unassigned"}`);
-			await reload();
 		} catch (error) {
 			flashToast((error as Error).message);
 		}
@@ -409,7 +460,13 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 	const sidebarWidth = sidebarVisible ? SIDEBAR_WIDTH : 0;
 	const boardAreaWidth = Math.max(30, termCols - sidebarWidth);
 	const subbarHeight = 1;
-	const bodyHeight = Math.max(5, termRows - 3);
+	// Reserve one row of margin below the footer so total rendered height is
+	// strictly less than termRows. Ink 5's log-update redraw moves the
+	// cursor up by the previous output's line count between frames; when
+	// content fills the terminal exactly, that cursor-up sequence clamps
+	// or scrolls and Ink falls back to clear-and-reprint — visible as a
+	// full-screen blink on every keypress.
+	const bodyHeight = Math.max(5, termRows - 4);
 	const boardHeight = Math.max(5, bodyHeight - subbarHeight - 1);
 
 	// Normal board column width = boardAreaWidth evenly split across configured statuses.
@@ -593,7 +650,7 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 		focus === "board" && grabbedId ? `moving ${grabbedId} · ` : null;
 
 	return (
-		<Box flexDirection="column" width={termCols} height={termRows}>
+		<Box flexDirection="column" width={termCols}>
 			<Box paddingX={1} width={termCols}>
 				<Text bold color={theme.accent}>
 					Ordna
@@ -655,8 +712,8 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 									}
 								}}
 								onSaved={(updated) => {
+									setTasks((prev) => mergeTask(prev, updated));
 									flashToast(`Saved ${updated.id}`);
-									void reload();
 									if (mode.kind !== "edit") return;
 									if (mode.returnTo === "detail") {
 										setMode({ kind: "detail", task: updated });

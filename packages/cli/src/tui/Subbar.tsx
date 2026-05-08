@@ -25,7 +25,7 @@ interface Props {
 	searchQuery: string;
 }
 
-export function Subbar({ filter, visible, total, searchQuery }: Props): React.JSX.Element {
+function SubbarImpl({ filter, visible, total, searchQuery }: Props): React.JSX.Element {
 	return (
 		<Box paddingX={1} paddingY={0}>
 			<Text color={theme.text} bold>
@@ -38,3 +38,5 @@ export function Subbar({ filter, visible, total, searchQuery }: Props): React.JS
 		</Box>
 	);
 }
+
+export const Subbar = React.memo(SubbarImpl);
