@@ -9,7 +9,7 @@ export interface ListOptions {
 }
 
 export async function runList(options: ListOptions = {}): Promise<void> {
-	const ctx = createContext();
+	const ctx = await createContext();
 	const tasks = await listTasks(ctx, options);
 	if (tasks.length === 0) {
 		console.log(c.dim("No tasks. Create one with `ordna create \"title\"`."));

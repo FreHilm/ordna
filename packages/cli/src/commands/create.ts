@@ -15,7 +15,7 @@ export async function runCreate(title: string, options: CreateOptions = {}): Pro
 		process.exitCode = 1;
 		return;
 	}
-	const ctx = createContext();
+	const ctx = await createContext();
 	const task = await createTask(
 		{
 			title,
@@ -28,5 +28,5 @@ export async function runCreate(title: string, options: CreateOptions = {}): Pro
 		ctx,
 	);
 	console.log(c.green(`Created ${c.bold(task.id)}: ${task.title}`));
-	console.log(c.dim(`  ${task.filePath}`));
+	if (task.filePath) console.log(c.dim(`  ${task.filePath}`));
 }

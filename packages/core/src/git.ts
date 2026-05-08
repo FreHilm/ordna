@@ -1,33 +1,21 @@
-import { spawn } from "node:child_process";
 import type { StoreContext } from "./store.js";
 
-function run(cwd: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
-	return new Promise((resolve, reject) => {
-		const proc = spawn("git", args, { cwd });
-		let stdout = "";
-		let stderr = "";
-		proc.stdout.on("data", (chunk) => {
-			stdout += chunk.toString();
-		});
-		proc.stderr.on("data", (chunk) => {
-			stderr += chunk.toString();
-		});
-		proc.on("error", reject);
-		proc.on("close", (code) => {
-			if (code === 0) resolve({ stdout, stderr });
-			else reject(new Error(`git ${args.join(" ")} failed (${code}): ${stderr.trim()}`));
-		});
-	});
-}
-
+/**
+ * Commit pending task changes.
+ *
+ * Delegates to the active provider's optional `commit()` method. Today the
+ * built-in `FileTaskProvider` implements it (stages the tasks directory and
+ * runs `git commit`); remote providers (Jira / Linear) leave it undefined,
+ * in which case this throws a clear error.
+ */
 export async function commitTasks(
 	ctx: StoreContext,
-	message = "chore(tasks): update",
+	message?: string,
 ): Promise<void> {
-	await run(ctx.cwd, ["add", "--", ctx.config.tasksDir]);
-	const status = await run(ctx.cwd, ["status", "--porcelain", "--", ctx.config.tasksDir]);
-	if (status.stdout.trim().length === 0) {
-		throw new Error("No task changes to commit.");
+	if (!ctx.provider.commit) {
+		throw new Error(
+			`Provider "${ctx.provider.kind}" does not support \`ordna commit\`. Use the remote tracker's own commit / sync flow instead.`,
+		);
 	}
-	await run(ctx.cwd, ["commit", "-m", message, "--", ctx.config.tasksDir]);
+	return ctx.provider.commit(message);
 }

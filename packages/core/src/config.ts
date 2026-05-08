@@ -4,14 +4,23 @@ import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import type { SchemaMode } from "./schema.js";
 
-export const configSchema = z.object({
-	tasksDir: z.string().default("tasks"),
-	schema: z.enum(["ordna", "backlog"]).default("ordna"),
-	statuses: z.array(z.string()).min(1).default(["todo", "doing", "done"]),
-	idPrefix: z.string().default("T"),
-	zeroPaddedIds: z.number().int().min(0).max(10).default(3),
-	webPort: z.number().int().min(1).max(65535).default(7420),
-});
+export const configSchema = z
+	.object({
+		tasksDir: z.string().default("tasks"),
+		schema: z.enum(["ordna", "backlog"]).default("ordna"),
+		statuses: z.array(z.string()).min(1).default(["todo", "doing", "done"]),
+		idPrefix: z.string().default("T"),
+		zeroPaddedIds: z.number().int().min(0).max(10).default(3),
+		webPort: z.number().int().min(1).max(65535).default(7420),
+		// T-022: storage backend selector. "file" is the built-in; any other
+		// value is dynamically loaded from "@frehilm/ordna-<value>" by
+		// `loadProvider` (see providers/load.ts).
+		provider: z.string().default("file"),
+	})
+	// Plugin-specific config blocks (e.g. `jira:`, `linear:`) survive parsing
+	// untouched so the resolved provider can validate its own slice. Core
+	// deliberately doesn't model them.
+	.passthrough();
 
 export type OrdnaConfig = z.infer<typeof configSchema>;
 

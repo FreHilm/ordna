@@ -44,7 +44,7 @@ function resolveClientDir(clientDir?: string): string | null {
 }
 
 export async function runWeb(options: RunWebOptions = {}): Promise<RunWebHandle> {
-	const ctx = createStoreContext(options.cwd);
+	const ctx = await createStoreContext(options.cwd);
 	const port = options.port ?? ctx.config.webPort;
 	const host = options.host ?? "127.0.0.1";
 
@@ -72,8 +72,7 @@ export async function runWeb(options: RunWebOptions = {}): Promise<RunWebHandle>
 
 	const unsubscribe = watchTasks(ctx, (event) => {
 		if (event.type === "removed") {
-			const id = event.filePath.split("/").pop()?.replace(/\.md$/, "") ?? event.filePath;
-			broadcast({ type: "removed", id });
+			broadcast({ type: "removed", id: event.id });
 		} else {
 			broadcast({ type: event.type, task: toWireTask(event.task) });
 		}

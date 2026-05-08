@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
 import {
 	ARCHIVED_STATUS,
-	createContext as createStoreContext,
 	createTask,
 	listTasks,
 	moveTask,
@@ -58,14 +57,14 @@ function flattenSidebarRows(rows: ReturnType<typeof buildSidebarRows>): SidebarR
 }
 
 export interface AppProps {
+	ctx: StoreContext;
 	agentHook?: AgentHookConfig | null;
 }
 
-export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Element {
+export function App({ ctx, agentHook: agentHookProp }: AppProps): React.JSX.Element {
 	const { exit } = useApp();
 	const { setRawMode } = useStdin();
 	const { rows: termRows, columns: termCols } = useTerminalSize();
-	const [ctx] = useState<StoreContext>(() => createStoreContext());
 	const [tasks, setTasks] = useState<Task[]>([]);
 	const [loaded, setLoaded] = useState(false);
 	const [columnIndex, setColumnIndex] = useState(0);
@@ -162,6 +161,10 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 
 	const launchEditor = useCallback(
 		(task: Task) => {
+			if (!task.filePath) {
+				flashToast(`${task.id} has no file to edit (remote task).`);
+				return;
+			}
 			const editor = process.env.EDITOR || process.env.VISUAL || "vi";
 			setRawMode?.(false);
 			const proc = spawn(editor, [task.filePath], { stdio: "inherit" });

@@ -2,7 +2,7 @@ import { createContext, updateTask } from "@frehilm/ordna-core";
 import { c } from "../colors.js";
 
 export async function runAssign(id: string, assignee: string | undefined): Promise<void> {
-	const ctx = createContext();
+	const ctx = await createContext();
 	const value = assignee && assignee.length > 0 ? assignee : null;
 	try {
 		const task = await updateTask(id, { assignee: value }, ctx);

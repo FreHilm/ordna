@@ -1,52 +1,31 @@
-import { basename } from "node:path";
-import chokidar from "chokidar";
+// TaskEvent / TaskEventListener live in provider.ts as of T-020. Re-exported
+// here so `import { TaskEvent } from ".../watcher.js"` callsites still work.
+import type { TaskEvent, TaskEventListener } from "./provider.js";
 import type { StoreContext } from "./store.js";
-import { parseTaskFile } from "./parser.js";
-import type { Task } from "./schema.js";
 
-export type TaskEvent =
-	| { type: "added"; task: Task }
-	| { type: "changed"; task: Task }
-	| { type: "removed"; filePath: string };
-
-export type TaskEventListener = (event: TaskEvent) => void;
+export type { TaskEvent, TaskEventListener };
 
 export interface WatchOptions {
+	/**
+	 * Reserved for future use. Today this is unused — the active provider
+	 * controls its own watch behavior.
+	 */
 	ignoreInitial?: boolean;
 }
 
+/**
+ * Subscribe to task changes.
+ *
+ * As of T-021 the watch implementation lives inside the active provider.
+ * `FileTaskProvider` runs a chokidar watcher on the tasks directory; remote
+ * providers may use polling, webhooks, or GraphQL subscriptions.
+ *
+ * The returned function unsubscribes; call it on shutdown.
+ */
 export function watchTasks(
 	ctx: StoreContext,
 	listener: TaskEventListener,
-	options: WatchOptions = {},
+	_options: WatchOptions = {},
 ): () => Promise<void> {
-	const watcher = chokidar.watch(ctx.tasksDir, {
-		ignoreInitial: options.ignoreInitial ?? true,
-		depth: 0,
-		persistent: true,
-	});
-
-	const emitIfMarkdown = async (
-		type: "added" | "changed",
-		filePath: string,
-	): Promise<void> => {
-		if (!filePath.endsWith(".md")) return;
-		try {
-			const task = await parseTaskFile(filePath);
-			listener({ type, task });
-		} catch {
-			// Ignore partial writes or malformed files.
-		}
-	};
-
-	watcher.on("add", (path) => void emitIfMarkdown("added", path));
-	watcher.on("change", (path) => void emitIfMarkdown("changed", path));
-	watcher.on("unlink", (path) => {
-		if (!path.endsWith(".md")) return;
-		listener({ type: "removed", filePath: path });
-	});
-
-	return async () => {
-		await watcher.close();
-	};
+	return ctx.provider.watch(listener);
 }
