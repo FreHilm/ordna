@@ -42,9 +42,9 @@ function CardImpl({ task, focused, selected, grabbed, width }: Props): React.JSX
 				<Text color={idColor} bold={isActive || grabbed}>
 					{task.id}
 				</Text>
-				{prioLetter ? <Text color={priorityColor}>{`  ${prioLetter}`}</Text> : null}
 				<Text color={theme.textFaint}>{"  "}</Text>
 				<Text color={titleColor}>{task.title}</Text>
+				{prioLetter ? <Text color={priorityColor}>{`  ${prioLetter}`}</Text> : null}
 				{task.tags.length > 0 ? (
 					<Text>
 						{"  "}

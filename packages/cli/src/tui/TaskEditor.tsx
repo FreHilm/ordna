@@ -9,7 +9,7 @@ import {
 } from "@frehilm/ordna-core";
 import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { colorForStatus, tagColor, theme } from "./theme.js";
 
 interface Props {
@@ -88,24 +88,78 @@ function priorityLabel(p: Priority | null): string {
 	return p === null ? "—" : p;
 }
 
+function offsetToRowCol(value: string, offset: number): [number, number] {
+	const lines = value.split("\n");
+	let acc = 0;
+	for (let i = 0; i < lines.length; i += 1) {
+		const len = (lines[i] ?? "").length;
+		if (offset <= acc + len) return [i, offset - acc];
+		acc += len + 1;
+	}
+	const last = Math.max(0, lines.length - 1);
+	return [last, (lines[last] ?? "").length];
+}
+
+function rowColToOffset(value: string, row: number, col: number): number {
+	const lines = value.split("\n");
+	const r = Math.max(0, Math.min(row, lines.length - 1));
+	const lineLen = (lines[r] ?? "").length;
+	const c = Math.max(0, Math.min(col, lineLen));
+	let acc = 0;
+	for (let i = 0; i < r; i += 1) acc += (lines[i] ?? "").length + 1;
+	return acc + c;
+}
+
+function isWordChar(ch: string): boolean {
+	return /[A-Za-z0-9_]/.test(ch);
+}
+
+function wordLeft(value: string, cursor: number): number {
+	let i = cursor;
+	while (i > 0 && !isWordChar(value[i - 1] ?? "")) i -= 1;
+	while (i > 0 && isWordChar(value[i - 1] ?? "")) i -= 1;
+	return i;
+}
+
+function wordRight(value: string, cursor: number): number {
+	let i = cursor;
+	const n = value.length;
+	while (i < n && !isWordChar(value[i] ?? "")) i += 1;
+	while (i < n && isWordChar(value[i] ?? "")) i += 1;
+	return i;
+}
+
 function MultilineEditor({
 	value,
-	onChange,
+	cursor,
 	width,
 }: {
 	value: string;
-	onChange: (next: string) => void;
+	cursor: number;
 	width: number;
 }): React.JSX.Element {
 	const lines = value.length === 0 ? [""] : value.split("\n");
+	const [cursorRow, cursorCol] = offsetToRowCol(value, cursor);
 	return (
 		<Box flexDirection="column" width={width}>
 			{lines.map((line, i) => {
-				const isLast = i === lines.length - 1;
+				if (i !== cursorRow) {
+					return (
+						<Text key={`${i}-${line.length}`} color={theme.text} wrap="wrap">
+							{line}
+						</Text>
+					);
+				}
+				const before = line.slice(0, cursorCol);
+				const at = line[cursorCol];
+				const after = line.slice(cursorCol + 1);
 				return (
-					<Text key={`${i}-${line.length}`} color={theme.text} wrap="wrap">
-						{line}
-						{isLast ? <Text color={theme.accent} inverse>{" "}</Text> : null}
+					<Text key={`${i}-${line.length}-c`} color={theme.text} wrap="wrap">
+						{before}
+						<Text color={theme.accent} inverse>
+							{at ?? " "}
+						</Text>
+						{after}
 					</Text>
 				);
 			})}
@@ -126,11 +180,20 @@ export function TaskEditor({
 	const [editing, setEditing] = useState(false);
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [cursor, setCursor] = useState(0);
 
 	const fields = useMemo(() => buildFields(draft), [draft]);
 	const focused = fields[focusIdx] ?? fields[0];
 	const innerWidth = Math.max(10, width - 4);
 	const valueWidth = Math.max(10, innerWidth - 12);
+
+	useEffect(() => {
+		if (!editing) return;
+		if (focused?.kind !== "section") return;
+		const sec = draft.sections[focused.index];
+		if (!sec) return;
+		setCursor((c) => Math.max(0, Math.min(c, sec.content.length)));
+	}, [editing, focused, draft.sections]);
 
 	const save = async (): Promise<void> => {
 		setSaving(true);
@@ -210,28 +273,84 @@ export function TaskEditor({
 				const idx = focused.index;
 				const section = draft.sections[idx];
 				if (!section) return;
-				if (key.return) {
-					const next = `${section.content}\n`;
+				const content = section.content;
+				const writeContent = (next: string, nextCursor: number): void => {
+					const clamped = Math.max(0, Math.min(next.length, nextCursor));
 					setDraft((d) => ({
 						...d,
-						sections: d.sections.map((s, i) => (i === idx ? { ...s, content: next } : s)),
+						sections: d.sections.map((s, i) =>
+							i === idx ? { ...s, content: next } : s,
+						),
 					}));
+					setCursor(clamped);
+				};
+				const moveCursor = (next: number): void => {
+					setCursor(Math.max(0, Math.min(content.length, next)));
+				};
+
+				// Word jumps (Ctrl+Left/Right)
+				if (key.ctrl && key.leftArrow) {
+					moveCursor(wordLeft(content, cursor));
 					return;
 				}
-				if (key.backspace || key.delete) {
-					const next = section.content.slice(0, -1);
-					setDraft((d) => ({
-						...d,
-						sections: d.sections.map((s, i) => (i === idx ? { ...s, content: next } : s)),
-					}));
+				if (key.ctrl && key.rightArrow) {
+					moveCursor(wordRight(content, cursor));
+					return;
+				}
+				// Home / End via Ctrl+A / Ctrl+E
+				if (key.ctrl && (input === "a" || input === "A")) {
+					const [row] = offsetToRowCol(content, cursor);
+					moveCursor(rowColToOffset(content, row, 0));
+					return;
+				}
+				if (key.ctrl && (input === "e" || input === "E")) {
+					const [row] = offsetToRowCol(content, cursor);
+					moveCursor(rowColToOffset(content, row, Number.MAX_SAFE_INTEGER));
+					return;
+				}
+				// Arrow keys
+				if (key.leftArrow) {
+					moveCursor(cursor - 1);
+					return;
+				}
+				if (key.rightArrow) {
+					moveCursor(cursor + 1);
+					return;
+				}
+				if (key.upArrow) {
+					const [row, col] = offsetToRowCol(content, cursor);
+					if (row === 0) moveCursor(0);
+					else moveCursor(rowColToOffset(content, row - 1, col));
+					return;
+				}
+				if (key.downArrow) {
+					const [row, col] = offsetToRowCol(content, cursor);
+					const lines = content.split("\n");
+					if (row >= lines.length - 1) moveCursor(content.length);
+					else moveCursor(rowColToOffset(content, row + 1, col));
+					return;
+				}
+				// Editing operations
+				if (key.return) {
+					const next = `${content.slice(0, cursor)}\n${content.slice(cursor)}`;
+					writeContent(next, cursor + 1);
+					return;
+				}
+				if (key.backspace) {
+					if (cursor === 0) return;
+					const next = content.slice(0, cursor - 1) + content.slice(cursor);
+					writeContent(next, cursor - 1);
+					return;
+				}
+				if (key.delete) {
+					if (cursor >= content.length) return;
+					const next = content.slice(0, cursor) + content.slice(cursor + 1);
+					writeContent(next, cursor);
 					return;
 				}
 				if (input && !key.ctrl && !key.meta) {
-					const next = section.content + input;
-					setDraft((d) => ({
-						...d,
-						sections: d.sections.map((s, i) => (i === idx ? { ...s, content: next } : s)),
-					}));
+					const next = content.slice(0, cursor) + input + content.slice(cursor);
+					writeContent(next, cursor + input.length);
 				}
 				return;
 			}
@@ -261,6 +380,10 @@ export function TaskEditor({
 			return;
 		}
 		if (key.return) {
+			if (focused?.kind === "section") {
+				const sec = draft.sections[focused.index];
+				setCursor(sec ? sec.content.length : 0);
+			}
 			setEditing(true);
 			return;
 		}
@@ -426,14 +549,7 @@ export function TaskEditor({
 					{isEditing ? (
 						<MultilineEditor
 							value={section.content}
-							onChange={(next) =>
-								setDraft((d) => ({
-									...d,
-									sections: d.sections.map((s, i) =>
-										i === idx ? { ...s, content: next } : s,
-									),
-								}))
-							}
+							cursor={cursor}
 							width={innerWidth - 2}
 						/>
 					) : section.content.length === 0 ? (
@@ -530,7 +646,7 @@ export function TaskEditor({
 				<Text color={theme.textMuted} italic>
 					{editing
 						? focused?.kind === "section"
-							? "Esc back · Tab next field · Ctrl+S save"
+							? "←/→/↑/↓ move · Ctrl+←/→ word · Ctrl+A/E line · Esc back · Ctrl+S save"
 							: focused?.kind === "status" || focused?.kind === "priority"
 								? "↑/↓ change · Enter/Esc back · Ctrl+S save"
 								: "Enter confirm · Esc back · Ctrl+S save"
