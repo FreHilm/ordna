@@ -96,7 +96,7 @@ interface Props {
 	height: number;
 }
 
-export function Sidebar({
+function SidebarImpl({
 	rows,
 	active,
 	focusedKey,
@@ -151,6 +151,11 @@ export function Sidebar({
 		</Box>
 	);
 }
+
+// Sidebar's props are all primitives or memoized refs from App, so default
+// shallow equality bails on every navigation keypress (cursor moves don't
+// touch filter / sidebarFocusedKey / focus / rows).
+export const Sidebar = React.memo(SidebarImpl);
 
 function Section({
 	title,

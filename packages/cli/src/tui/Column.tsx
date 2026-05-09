@@ -18,7 +18,7 @@ interface Props {
 	height: number;
 }
 
-export function Column({
+function ColumnImpl({
 	status,
 	statusIndex,
 	visibleTasks,
@@ -96,3 +96,35 @@ export function Column({
 		</Box>
 	);
 }
+
+// `visibleTasks` is rebuilt with `.slice()` on every render, so default
+// shallow equality would always say "different." Compare element-wise by
+// (id, rawContent) — that's the parser's full-file fingerprint, so unchanged
+// tasks compare equal even after a re-read from disk.
+export const Column = React.memo(ColumnImpl, (prev, next) => {
+	if (
+		prev.status !== next.status ||
+		prev.statusIndex !== next.statusIndex ||
+		prev.totalTasks !== next.totalTasks ||
+		prev.aboveCount !== next.aboveCount ||
+		prev.belowCount !== next.belowCount ||
+		prev.focused !== next.focused ||
+		prev.selectedRelativeIndex !== next.selectedRelativeIndex ||
+		prev.grabbedId !== next.grabbedId ||
+		prev.width !== next.width ||
+		prev.height !== next.height
+	) {
+		return false;
+	}
+	const a = prev.visibleTasks;
+	const b = next.visibleTasks;
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i++) {
+		const ta = a[i];
+		const tb = b[i];
+		if (!ta || !tb) return false;
+		if (ta === tb) continue;
+		if (ta.id !== tb.id || ta.rawContent !== tb.rawContent) return false;
+	}
+	return true;
+});

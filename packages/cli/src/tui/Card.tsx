@@ -19,7 +19,7 @@ function renderProgress(done: number, total: number): string {
 	return "█".repeat(filled) + "░".repeat(PROGRESS_BAR_CELLS - filled);
 }
 
-export function Card({ task, focused, selected, grabbed, width }: Props): React.JSX.Element {
+function CardImpl({ task, focused, selected, grabbed, width }: Props): React.JSX.Element {
 	const isActive = selected && focused;
 	const marker = grabbed ? "⇄" : isActive ? "›" : " ";
 
@@ -42,9 +42,9 @@ export function Card({ task, focused, selected, grabbed, width }: Props): React.
 				<Text color={idColor} bold={isActive || grabbed}>
 					{task.id}
 				</Text>
-				{prioLetter ? <Text color={priorityColor}>{`  ${prioLetter}`}</Text> : null}
 				<Text color={theme.textFaint}>{"  "}</Text>
 				<Text color={titleColor}>{task.title}</Text>
+				{prioLetter ? <Text color={priorityColor}>{`  ${prioLetter}`}</Text> : null}
 				{task.tags.length > 0 ? (
 					<Text>
 						{"  "}
@@ -77,3 +77,22 @@ export function Card({ task, focused, selected, grabbed, width }: Props): React.
 		</Box>
 	);
 }
+
+// Listing tasks rebuilds Task objects from disk each time, so even an
+// unrelated keystroke (move cursor) would re-render every card under default
+// shallow equality. `rawContent` is the parser's full-file fingerprint —
+// if it's the same and the id is the same, the rendered output cannot have
+// changed.
+export const Card = React.memo(CardImpl, (prev, next) => {
+	if (
+		prev.focused !== next.focused ||
+		prev.selected !== next.selected ||
+		prev.grabbed !== next.grabbed ||
+		prev.width !== next.width
+	) {
+		return false;
+	}
+	const a = prev.task;
+	const b = next.task;
+	return a === b || (a.id === b.id && a.rawContent === b.rawContent);
+});
