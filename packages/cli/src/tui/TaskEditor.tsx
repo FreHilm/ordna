@@ -129,6 +129,35 @@ function wordRight(value: string, cursor: number): number {
 	return i;
 }
 
+function wrapText(text: string, width: number): string[] {
+	if (width <= 0) return [text];
+	const out: string[] = [];
+	for (const para of text.split("\n")) {
+		if (para.length === 0) {
+			out.push("");
+			continue;
+		}
+		let remaining = para;
+		while (remaining.length > width) {
+			let breakAt = width;
+			const lastSpace = remaining.lastIndexOf(" ", width);
+			if (lastSpace > Math.floor(width / 2)) breakAt = lastSpace;
+			out.push(remaining.slice(0, breakAt).trimEnd());
+			remaining = remaining.slice(breakAt).replace(/^ +/, "");
+		}
+		out.push(remaining);
+	}
+	return out;
+}
+
+function sectionHeight(content: string, innerWidth: number): number {
+	// 1 marginTop + 1 heading + content lines (paddingLeft=2)
+	const contentWidth = Math.max(1, innerWidth - 2);
+	const contentLines =
+		content.length === 0 ? 1 : wrapText(content, contentWidth).length;
+	return 1 + 1 + contentLines;
+}
+
 function MultilineEditor({
 	value,
 	cursor,
@@ -181,11 +210,94 @@ export function TaskEditor({
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [cursor, setCursor] = useState(0);
+	const [sectionScrollIdx, setSectionScrollIdx] = useState(0);
 
 	const fields = useMemo(() => buildFields(draft), [draft]);
 	const focused = fields[focusIdx] ?? fields[0];
 	const innerWidth = Math.max(10, width - 4);
 	const valueWidth = Math.max(10, innerWidth - 12);
+
+	// Sections area height: total popup height minus borders/padding (4),
+	// id row (1), error row (0/1), 1 marginTop above metadata, 6 metadata rows,
+	// 1 marginTop above footer, 1 footer row.
+	const reservedRows = 4 + 1 + (error ? 1 : 0) + 1 + 6 + 1 + 1;
+	const sectionsAreaHeight = Math.max(1, height - reservedRows);
+
+	const renderableSections = useMemo(() => {
+		return draft.sections
+			.map((s, i) => ({ section: s, index: i }))
+			.filter((entry) => entry.section.heading !== "");
+	}, [draft.sections]);
+
+	const sectionLayout = useMemo(() => {
+		// Walk renderable sections starting at sectionScrollIdx, accumulating
+		// heights until we exceed the available area. Reserve indicator rows
+		// (1 each) only when scrolling is needed in that direction.
+		const total = renderableSections.length;
+		const start = Math.max(0, Math.min(total, sectionScrollIdx));
+		const hasAbove = start > 0;
+		let used = hasAbove ? 1 : 0;
+		let end = start;
+		while (end < total) {
+			const entry = renderableSections[end];
+			if (!entry) break;
+			const h = sectionHeight(entry.section.content, innerWidth);
+			// Reserve a row for the bottom indicator if this isn't the last section
+			const bottomReserve = end < total - 1 ? 1 : 0;
+			if (used + h + bottomReserve > sectionsAreaHeight && end > start) break;
+			used += h;
+			end += 1;
+		}
+		return {
+			start,
+			end,
+			aboveCount: start,
+			belowCount: Math.max(0, total - end),
+			total,
+		};
+	}, [renderableSections, sectionScrollIdx, sectionsAreaHeight, innerWidth]);
+
+	// When the focused field is a section that's outside the current window,
+	// adjust the scroll so it becomes visible. Run after render so we use the
+	// just-computed layout.
+	useEffect(() => {
+		if (focused?.kind !== "section") return;
+		const sectionIdx = renderableSections.findIndex(
+			(e) => e.index === focused.index,
+		);
+		if (sectionIdx === -1) return;
+		if (sectionIdx < sectionLayout.start) {
+			setSectionScrollIdx(sectionIdx);
+			return;
+		}
+		if (sectionIdx >= sectionLayout.end) {
+			// Scroll forward by enough sections to bring this one into view.
+			// Walk backward from the focused section, accumulating heights
+			// until the budget is filled.
+			let used = 1; // top indicator
+			let newStart = sectionIdx;
+			while (newStart > 0) {
+				const prev = renderableSections[newStart - 1];
+				if (!prev) break;
+				const h = sectionHeight(prev.section.content, innerWidth);
+				const bottomReserve = sectionIdx < renderableSections.length - 1 ? 1 : 0;
+				const focusedH = sectionHeight(
+					renderableSections[sectionIdx]?.section.content ?? "",
+					innerWidth,
+				);
+				if (used + focusedH + h + bottomReserve > sectionsAreaHeight) break;
+				newStart -= 1;
+				used += h;
+			}
+			setSectionScrollIdx(newStart);
+		}
+	}, [
+		focused,
+		renderableSections,
+		sectionLayout,
+		sectionsAreaHeight,
+		innerWidth,
+	]);
 
 	useEffect(() => {
 		if (!editing) return;
@@ -636,10 +748,24 @@ export function TaskEditor({
 				{renderRow("Depends", { kind: "depends_on" }, renderDependsOn())}
 			</Box>
 
-			<Box flexDirection="column" flexGrow={1}>
-				{draft.sections.map((s, i) =>
-					s.heading === "" ? null : renderSection(i, s),
-				)}
+			<Box
+				flexDirection="column"
+				width={innerWidth}
+				height={sectionsAreaHeight}
+			>
+				{sectionLayout.aboveCount > 0 ? (
+					<Text color={theme.textMuted} italic wrap="truncate-end">
+						↑ {sectionLayout.aboveCount} more
+					</Text>
+				) : null}
+				{renderableSections
+					.slice(sectionLayout.start, sectionLayout.end)
+					.map((entry) => renderSection(entry.index, entry.section))}
+				{sectionLayout.belowCount > 0 ? (
+					<Text color={theme.textMuted} italic wrap="truncate-end">
+						↓ {sectionLayout.belowCount} more
+					</Text>
+				) : null}
 			</Box>
 
 			<Box marginTop={1}>
