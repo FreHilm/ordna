@@ -33,7 +33,6 @@ function CardImpl({ task, focused, selected, grabbed, width }: Props): React.JSX
 	const idColor = grabbed ? theme.grabMarker : isActive ? theme.accent : theme.textDim;
 	const titleColor = grabbed || isActive ? theme.text : theme.textDim;
 	const priorityColor = task.priority ? theme.priority[task.priority] : undefined;
-	const prioLetter = task.priority ? `!${task.priority.charAt(0)}` : null;
 
 	return (
 		<Box width={width}>
@@ -42,9 +41,17 @@ function CardImpl({ task, focused, selected, grabbed, width }: Props): React.JSX
 				<Text color={idColor} bold={isActive || grabbed}>
 					{task.id}
 				</Text>
+				{/* Priority slot is always 1 char wide so titles align across rows
+				    whether or not the task has a priority. */}
+				{task.priority ? (
+					<Text color={priorityColor} bold>
+						!
+					</Text>
+				) : (
+					<Text> </Text>
+				)}
 				<Text color={theme.textFaint}>{"  "}</Text>
 				<Text color={titleColor}>{task.title}</Text>
-				{prioLetter ? <Text color={priorityColor}>{`  ${prioLetter}`}</Text> : null}
 				{task.tags.length > 0 ? (
 					<Text>
 						{"  "}
