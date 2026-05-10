@@ -46,6 +46,7 @@ export {
 	createContext,
 	createTask,
 	deleteTask,
+	disposeContext,
 	getTask,
 	isKnownStatus,
 	listTasks,

@@ -1,7 +1,7 @@
 import { serveStatic } from "@hono/node-server/serve-static";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
-import { createContext as createStoreContext, watchTasks, type StoreContext } from "@frehilm/ordna-core";
+import { createContext as createStoreContext, disposeContext, watchTasks, type StoreContext } from "@frehilm/ordna-core";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -139,7 +139,22 @@ export async function runWeb(options: RunWebOptions = {}): Promise<RunWebHandle>
 		}
 	}
 
+	// T-023: SIGINT/SIGTERM call close() so a future remote provider's open
+	// sockets / subscriptions get a clean shutdown when the user hits Ctrl-C.
+	// `closed` guards against double-invocation (signal arrives while close()
+	// is already in flight, or both signals fire) and removes the handlers
+	// once we're shutting down.
+	let closed = false;
+	const onSignal = (): void => {
+		if (closed) return;
+		void close();
+	};
+
 	const close = async (): Promise<void> => {
+		if (closed) return;
+		closed = true;
+		process.off("SIGINT", onSignal);
+		process.off("SIGTERM", onSignal);
 		await unsubscribe();
 		const s = server as unknown as {
 			closeAllConnections?: () => void;
@@ -149,7 +164,11 @@ export async function runWeb(options: RunWebOptions = {}): Promise<RunWebHandle>
 		s.closeIdleConnections?.();
 		s.closeAllConnections?.();
 		await new Promise<void>((r) => s.close(() => r()));
+		await disposeContext(ctx);
 	};
+
+	process.on("SIGINT", onSignal);
+	process.on("SIGTERM", onSignal);
 
 	return { port: actualPort, close, context: ctx };
 }

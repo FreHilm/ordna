@@ -27,9 +27,16 @@ export type ListTasksOptions = ListOptions;
  *
  * As of T-022 this is async: the active `TaskProvider` is resolved through
  * `loadProvider`, which dynamically imports external plugin packages
- * (`@frehilm/ordna-<name>`). The default `provider: "file"` path stays
- * synchronous in spirit (no dynamic import) but the surface remains async
- * so callers don't have to branch on the provider kind.
+ * (`@frehilm/ordna-<name>`). T-023 wires `provider.init?.()` here so a
+ * remote provider can validate auth or fetch a status mapping before any
+ * `list()` / `get()` call. Errors from `init` propagate — the caller sees
+ * the real failure ("Jira: auth token expired") rather than a deeper
+ * mystery later on.
+ *
+ * One-shot CLI commands (`create`, `list`, `show`, `move`, `assign`,
+ * `commit`) do not need to call `disposeContext` afterwards — they exit
+ * naturally and the OS reclaims any resources. Only long-lived hosts
+ * (`ordna web`, `ordna board`) need an explicit dispose on shutdown.
  */
 export async function createContext(
 	cwd: string = process.cwd(),
@@ -37,7 +44,28 @@ export async function createContext(
 	const config = loadConfig({ cwd });
 	const tasksDir = resolveTasksDir(config, cwd);
 	const provider = await loadProvider(config, cwd);
+	await provider.init?.();
 	return { cwd, config, tasksDir, provider };
+}
+
+/**
+ * Best-effort cleanup of a context's provider. Used by long-lived hosts
+ * (`ordna web`, `ordna board`) on shutdown.
+ *
+ * Errors from `dispose` are caught and logged to stderr — the user is
+ * trying to quit; we shouldn't block them on a watcher's close call. If
+ * the provider doesn't implement `dispose`, this is a no-op.
+ */
+export async function disposeContext(ctx: StoreContext): Promise<void> {
+	if (!ctx.provider.dispose) return;
+	try {
+		await ctx.provider.dispose();
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		console.error(
+			`[ordna] provider "${ctx.provider.kind}" dispose failed: ${message}`,
+		);
+	}
 }
 
 export async function listTasks(
