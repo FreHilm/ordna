@@ -442,7 +442,8 @@ select {
 }
 
 .col {
-	flex: 0 0 300px;
+ 	flex: 1 1 0;
+  min-width: 280px;
 	display: flex;
 	flex-direction: column;
 	min-height: 0;
@@ -525,7 +526,7 @@ select {
 
 .card {
 	position: relative;
-	padding: 12px 14px;
+	padding: 4px 10px;
 	background: var(--bg-1);
 	border: 1px solid var(--line);
 	border-radius: var(--r);
@@ -552,7 +553,7 @@ select {
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	margin-bottom: 8px;
+	margin-bottom: 2px;
 }
 .card-id {
 	font-family: var(--mono);
@@ -604,14 +605,14 @@ select {
 	line-height: 1.4;
 	letter-spacing: -0.005em;
 	color: var(--text);
-	margin-bottom: 10px;
+	margin-bottom: 6px;
 }
 
 .card-tags {
 	display: flex;
 	flex-wrap: wrap;
 	gap: 4px;
-	margin-bottom: 10px;
+	margin-bottom: 6px;
 }
 .chip {
 	display: inline-flex;
