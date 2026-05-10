@@ -1,6 +1,6 @@
 {
   "name": "@frehilm/ordna-web",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Local web Kanban for Ordna — Hono server + React SPA. Re-exports the core API.",
   "license": "MIT",
   "author": "FreHilm <1584617+FreHilm@users.noreply.github.com>",
@@ -11,7 +11,15 @@
   },
   "homepage": "https://github.com/FreHilm/ordna/tree/main/packages/web#readme",
   "bugs": "https://github.com/FreHilm/ordna/issues",
-  "keywords": ["kanban", "web", "ordna", "tasks", "markdown", "hono", "react"],
+  "keywords": [
+    "kanban",
+    "web",
+    "ordna",
+    "tasks",
+    "markdown",
+    "hono",
+    "react"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -21,7 +29,10 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist", "dist-client"],
+  "files": [
+    "dist",
+    "dist-client"
+  ],
   "scripts": {
     "build": "pnpm build:client && pnpm build:server",
     "build:server": "tsc -p tsconfig.server.json",

@@ -1,6 +1,6 @@
 {
   "name": "@frehilm/ordna-core",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Git-native task management — pure data layer. Tasks are markdown files; the board is the directory.",
   "license": "MIT",
   "author": "FreHilm <1584617+FreHilm@users.noreply.github.com>",
@@ -11,7 +11,13 @@
   },
   "homepage": "https://github.com/FreHilm/ordna#readme",
   "bugs": "https://github.com/FreHilm/ordna/issues",
-  "keywords": ["kanban", "tasks", "markdown", "git", "project-management"],
+  "keywords": [
+    "kanban",
+    "tasks",
+    "markdown",
+    "git",
+    "project-management"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -21,7 +27,9 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
