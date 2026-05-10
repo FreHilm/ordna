@@ -12,6 +12,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
+    "@frehilm/ordna-mock": "workspace:*",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
   },

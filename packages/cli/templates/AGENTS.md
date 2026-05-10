@@ -160,6 +160,17 @@ webPort: 7420                           # default port for `ordna web`
 - `statuses` defines the columns 1:1, in order. The first status is the
   default for newly-created tasks unless `--status` is passed.
 
+**Pluggable backends.** Config may also contain a `provider:` key. The
+default is `file` — tasks live as markdown files in `tasks/` as described
+in this document, and everything you read here applies verbatim. If you
+see `provider: jira`, `provider: linear`, or any other value, the project
+has loaded an external plugin (`@frehilm/ordna-<name>`) that handles
+storage differently — task files may not exist on disk, `git log
+tasks/T-005.md` won't work, and you should prefer `ordna show <id>` /
+`ordna update` over reading or writing files directly. When the
+`provider:` key is absent or `file`, treat `tasks/*.md` as the source of
+truth and edit it like any other file.
+
 ---
 
 ## 4. The `ordna` CLI

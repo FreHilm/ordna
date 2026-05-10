@@ -11,6 +11,9 @@ importers:
       '@biomejs/biome':
         specifier: ^1.9.4
         version: 1.9.4
+      '@frehilm/ordna-mock':
+        specifier: workspace:*
+        version: link:packages/mock-provider
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
@@ -79,6 +82,19 @@ importers:
       vitest:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.19.17)
+
+  packages/mock-provider:
+    dependencies:
+      '@frehilm/ordna-core':
+        specifier: workspace:^
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.5
+        version: 22.19.17
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
 
   packages/web:
     dependencies:
