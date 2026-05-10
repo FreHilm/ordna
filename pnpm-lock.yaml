@@ -83,6 +83,21 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.19.17)
 
+  packages/jira:
+    devDependencies:
+      '@frehilm/ordna-core':
+        specifier: workspace:^
+        version: link:../core
+      '@types/node':
+        specifier: ^22.10.5
+        version: 22.19.17
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.17)
+
   packages/mock-provider:
     dependencies:
       '@frehilm/ordna-core':
