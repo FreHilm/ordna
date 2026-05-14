@@ -15,6 +15,7 @@
     "@frehilm/ordna-jira": "workspace:*",
     "@frehilm/ordna-linear": "workspace:*",
     "@frehilm/ordna-mock": "workspace:*",
+    "@frehilm/ordna-ref": "workspace:*",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
   },

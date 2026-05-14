@@ -80,8 +80,19 @@ function mergeTask(prev: Task[], task: Task): Task[] {
 	return next;
 }
 
-function removeTaskByPath(prev: Task[], filePath: string): Task[] {
-	const idx = prev.findIndex((t) => t.filePath === filePath);
+function removeTaskByPathOrId(
+	prev: Task[],
+	id: string,
+	filePath: string | undefined,
+): Task[] {
+	// Remote providers (Jira / Linear / ref) emit `removed` events with
+	// an empty filePath because they have no on-disk path. Match on id
+	// first; fall back to filePath for the file provider's events
+	// where the id may not be derivable from the path alone.
+	let idx = prev.findIndex((t) => t.id === id);
+	if (idx === -1 && filePath) {
+		idx = prev.findIndex((t) => t.filePath === filePath);
+	}
 	if (idx === -1) return prev;
 	return prev.filter((_, i) => i !== idx);
 }
@@ -136,7 +147,9 @@ export function App({ ctx, agentHook: agentHookProp }: AppProps): React.JSX.Elem
 	const applyEvent = useCallback((event: TaskEvent): void => {
 		startTransition(() => {
 			if (event.type === "removed") {
-				setTasks((prev) => removeTaskByPath(prev, event.filePath));
+				setTasks((prev) =>
+					removeTaskByPathOrId(prev, event.id, event.filePath),
+				);
 			} else {
 				setTasks((prev) => mergeTask(prev, event.task));
 			}
