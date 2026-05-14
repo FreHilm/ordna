@@ -8,7 +8,7 @@ import { makeTempRepo } from "./helpers.js";
 describe("store — ordna mode", () => {
 	it("creates tasks with T-001 style IDs and lists them", async () => {
 		const repo = makeTempRepo("ordna");
-		const ctx = createContext(repo.cwd);
+		const ctx = await createContext(repo.cwd);
 
 		const a = await createTask({ title: "First" }, ctx);
 		const b = await createTask({ title: "Second" }, ctx);
@@ -24,7 +24,7 @@ describe("store — ordna mode", () => {
 
 	it("move to done is blocked when depends_on has unfinished tasks", async () => {
 		const repo = makeTempRepo("ordna");
-		const ctx = createContext(repo.cwd);
+		const ctx = await createContext(repo.cwd);
 
 		const dep = await createTask({ title: "Dep" }, ctx);
 		const blocked = await createTask({ title: "Blocked", depends_on: [dep.id] }, ctx);
@@ -38,14 +38,14 @@ describe("store — ordna mode", () => {
 
 	it("rejects unknown statuses", async () => {
 		const repo = makeTempRepo("ordna");
-		const ctx = createContext(repo.cwd);
+		const ctx = await createContext(repo.cwd);
 		const t = await createTask({ title: "x" }, ctx);
 		await expect(updateTask(t.id, { status: "nonsense" }, ctx)).rejects.toThrow(/not in configured/);
 	});
 
 	it("updates bump updated_at", async () => {
 		const repo = makeTempRepo("ordna");
-		const ctx = createContext(repo.cwd);
+		const ctx = await createContext(repo.cwd);
 		const t = await createTask({ title: "x" }, ctx);
 		const updated = await updateTask(t.id, { title: "y" }, ctx);
 		const today = new Date().toISOString().slice(0, 10);
@@ -57,7 +57,7 @@ describe("store — ordna mode", () => {
 describe("store — backlog mode file naming", () => {
 	it("writes task-N - slug.md files", async () => {
 		const repo = makeTempRepo("backlog");
-		const ctx = createContext(repo.cwd);
+		const ctx = await createContext(repo.cwd);
 		const t = await createTask({ title: "Add Search Endpoint" }, ctx);
 		expect(t.id).toBe("T-001");
 		expect(t.filePath).toMatch(/task-1 - add-search-endpoint\.md$/);
@@ -72,7 +72,7 @@ describe("store — defaults without config", () => {
 		const { mkdtempSync } = await import("node:fs");
 		const { tmpdir } = await import("node:os");
 		const cwd = mkdtempSync(join(tmpdir(), "ordna-defaults-"));
-		const ctx = createContext(cwd);
+		const ctx = await createContext(cwd);
 
 		const t = await createTask({ title: "Default test" }, ctx);
 		expect(t.id).toBe("T-001");

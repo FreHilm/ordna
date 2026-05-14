@@ -1,7 +1,7 @@
 import { serveStatic } from "@hono/node-server/serve-static";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
-import { createContext as createStoreContext, watchTasks, type StoreContext } from "@frehilm/ordna-core";
+import { createContext as createStoreContext, disposeContext, watchTasks, type StoreContext } from "@frehilm/ordna-core";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,7 +44,7 @@ function resolveClientDir(clientDir?: string): string | null {
 }
 
 export async function runWeb(options: RunWebOptions = {}): Promise<RunWebHandle> {
-	const ctx = createStoreContext(options.cwd);
+	const ctx = await createStoreContext(options.cwd);
 	const port = options.port ?? ctx.config.webPort;
 	const host = options.host ?? "127.0.0.1";
 
@@ -72,8 +72,7 @@ export async function runWeb(options: RunWebOptions = {}): Promise<RunWebHandle>
 
 	const unsubscribe = watchTasks(ctx, (event) => {
 		if (event.type === "removed") {
-			const id = event.filePath.split("/").pop()?.replace(/\.md$/, "") ?? event.filePath;
-			broadcast({ type: "removed", id });
+			broadcast({ type: "removed", id: event.id });
 		} else {
 			broadcast({ type: event.type, task: toWireTask(event.task) });
 		}
@@ -140,17 +139,56 @@ export async function runWeb(options: RunWebOptions = {}): Promise<RunWebHandle>
 		}
 	}
 
-	const close = async (): Promise<void> => {
+	// T-023: SIGINT/SIGTERM call close() so a future remote provider's open
+	// sockets / subscriptions get a clean shutdown when the user hits Ctrl-C.
+	//
+	// `closing` holds the in-flight close promise (rather than a plain
+	// boolean flag) so re-entrant callers receive the SAME promise to
+	// await. This matters because the CLI's `web` command registers its
+	// own SIGINT/SIGTERM handlers that `await handle.close()` then
+	// `process.exit(0)`. If close() short-circuited on a boolean, the
+	// CLI's await would resolve immediately while disposeContext was
+	// still mid-flight, and process.exit would kill the process before
+	// `provider.dispose()` ran.
+	let closing: Promise<void> | null = null;
+	const onSignal = (): void => {
+		void close();
+	};
+
+	const doClose = async (): Promise<void> => {
+		process.off("SIGINT", onSignal);
+		process.off("SIGTERM", onSignal);
 		await unsubscribe();
 		const s = server as unknown as {
 			closeAllConnections?: () => void;
 			closeIdleConnections?: () => void;
 			close: (cb: () => void) => void;
+			removeAllListeners?: (event?: string) => void;
 		};
+		// @hono/node-ws attaches an `upgrade` listener that keeps
+		// server.close()'s drain callback from firing even after all HTTP
+		// connections have been closed. Remove it explicitly so the
+		// server can actually shut down, then force-close any sockets.
+		s.removeAllListeners?.("upgrade");
 		s.closeIdleConnections?.();
 		s.closeAllConnections?.();
-		await new Promise<void>((r) => s.close(() => r()));
+		// Race server.close() against a short timeout so a stuck socket
+		// can't block disposeContext from running. The user's signal
+		// already said "stop"; dispose is the cleanup we owe them.
+		await Promise.race([
+			new Promise<void>((r) => s.close(() => r())),
+			new Promise<void>((r) => setTimeout(r, 1500)),
+		]);
+		await disposeContext(ctx);
 	};
+
+	const close = (): Promise<void> => {
+		if (!closing) closing = doClose();
+		return closing;
+	};
+
+	process.on("SIGINT", onSignal);
+	process.on("SIGTERM", onSignal);
 
 	return { port: actualPort, close, context: ctx };
 }

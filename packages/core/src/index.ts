@@ -24,8 +24,15 @@ export type {
 	Section,
 	Task,
 	TaskCreateInput,
+	TaskRemote,
 	TaskUpdateInput,
 } from "./schema.js";
+export type {
+	ListOptions,
+	TaskEvent,
+	TaskEventListener,
+	TaskProvider,
+} from "./provider.js";
 export {
 	BACKLOG_BODY_HEADINGS,
 	BODY_HEADING_ALIASES,
@@ -39,6 +46,7 @@ export {
 	createContext,
 	createTask,
 	deleteTask,
+	disposeContext,
 	getTask,
 	isKnownStatus,
 	listTasks,
@@ -48,4 +56,4 @@ export {
 	type StoreContext,
 } from "./store.js";
 export { defaultSectionsFor, serializeTask } from "./writer.js";
-export { watchTasks, type TaskEvent, type TaskEventListener, type WatchOptions } from "./watcher.js";
+export { watchTasks, type WatchOptions } from "./watcher.js";

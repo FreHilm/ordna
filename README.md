@@ -80,6 +80,25 @@ Each is a regular markdown file. Edit them in `$EDITOR` and the board updates li
 
 The two UI packages **re-export the full core API**. So if you want both data access and a UI, you only ever install one Ordna package.
 
+## Backends
+
+Ordna's storage layer is pluggable. The built-in `file` provider — markdown files in `tasks/` — is the default and the one most users want. External backends (Jira, Linear, custom in-house trackers) are loaded dynamically from `@frehilm/ordna-<name>` packages when you opt in via `.ordna/config.yaml`:
+
+```yaml
+# .ordna/config.yaml
+provider: file        # default — tasks/*.md (no install needed)
+# provider: jira      # requires `pnpm add @frehilm/ordna-jira`
+# provider: linear    # requires `pnpm add @frehilm/ordna-linear`
+```
+
+| Backend | Package | Status |
+|---|---|---|
+| File (markdown in `tasks/`) | built into `@frehilm/ordna-core` | shipped |
+| Jira | `@frehilm/ordna-jira` | planned (T-008) |
+| Linear | `@frehilm/ordna-linear` | planned (T-009) |
+
+Any package matching `@frehilm/ordna-<name>` that exports a `createProvider(config, cwd)` factory will load and run through the same CLI / TUI / web surface — there's no second API. See [`packages/core/README.md`](packages/core/README.md#writing-a-provider) for the plugin contract.
+
 ## Agent skill (AGENTS.md)
 
 Ordna ships a vendor-neutral [`AGENTS.md`](packages/cli/templates/AGENTS.md)

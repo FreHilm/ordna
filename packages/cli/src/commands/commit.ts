@@ -2,7 +2,7 @@ import { commitTasks, createContext } from "@frehilm/ordna-core";
 import { c } from "../colors.js";
 
 export async function runCommit(message: string | undefined): Promise<void> {
-	const ctx = createContext();
+	const ctx = await createContext();
 	try {
 		await commitTasks(ctx, message);
 		console.log(c.green("Committed."));

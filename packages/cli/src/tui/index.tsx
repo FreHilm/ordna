@@ -1,3 +1,7 @@
+import {
+	createContext as createStoreContext,
+	disposeContext,
+} from "@frehilm/ordna-core";
 import { render } from "ink";
 import React from "react";
 import type { AgentHookConfig } from "../agent.js";
@@ -15,6 +19,8 @@ export interface RunBoardOptions {
 }
 
 export async function runBoard(options: RunBoardOptions = {}): Promise<void> {
+	const ctx = await createStoreContext();
+
 	const useAltScreen = process.stdout.isTTY;
 	if (useAltScreen) process.stdout.write(ENTER_ALT_SCREEN);
 
@@ -22,12 +28,21 @@ export async function runBoard(options: RunBoardOptions = {}): Promise<void> {
 		if (useAltScreen) process.stdout.write(EXIT_ALT_SCREEN);
 	};
 
-	const { waitUntilExit } = render(<App agentHook={options.agentHook} />, {
-		exitOnCtrlC: true,
-	});
+	const { waitUntilExit } = render(
+		<App ctx={ctx} agentHook={options.agentHook} />,
+		{
+			exitOnCtrlC: true,
+		},
+	);
 	try {
 		await waitUntilExit();
 	} finally {
 		cleanup();
+		// T-023: TUI shutdown runs through here whether the user pressed `q`,
+		// hit Ctrl-C, or the App threw. Dispose any provider-owned resources
+		// (chokidar watchers for the file provider; sockets/subscriptions for
+		// future remote providers). `disposeContext` swallows its own errors
+		// so we never block the exit.
+		await disposeContext(ctx);
 	}
 }

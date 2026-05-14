@@ -15,6 +15,22 @@ export interface Section {
 	content: string;
 }
 
+/**
+ * Metadata for tasks backed by a remote provider (Jira, Linear, etc.).
+ * Lets UIs render an "Open in Jira" link or a sprint chip without `Task`
+ * itself having to model every concept the remote tool supports.
+ */
+export interface TaskRemote {
+	/** The provider that owns this task — "jira", "linear", etc. Matches `TaskProvider.kind`. */
+	provider: string;
+	/** The ID the remote tool uses for this task (e.g. Jira issue key, Linear issue id). */
+	externalId: string;
+	/** Free-form remote-only fields surfaced read-only in the UI. */
+	extras?: Record<string, unknown>;
+	/** Direct URL to the issue in the remote tool. */
+	url?: string;
+}
+
 export interface Task {
 	id: string;
 	title: string;
@@ -27,8 +43,12 @@ export interface Task {
 	updated_at: string;
 	sections: Section[];
 	extra_frontmatter: Record<string, unknown>;
-	filePath: string;
-	rawContent: string;
+	/** Path to the source file. Optional — only set by file-backed providers. */
+	filePath?: string;
+	/** Original markdown content. Optional — only set by file-backed providers. */
+	rawContent?: string;
+	/** Remote-provider metadata. Set by non-file providers. */
+	remote?: TaskRemote;
 }
 
 export interface TaskCreateInput {

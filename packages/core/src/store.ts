@@ -1,16 +1,13 @@
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
-import { readFile, unlink, writeFile } from "node:fs/promises";
-import { basename, join } from "node:path";
 import { type OrdnaConfig, loadConfig, resolveTasksDir } from "./config.js";
-import { formatId, nextId, parseId } from "./ids.js";
-import { parseTask } from "./parser.js";
-import type { SchemaMode, Section, Task, TaskCreateInput, TaskUpdateInput } from "./schema.js";
-import { defaultSectionsFor, serializeTask } from "./writer.js";
+import type { ListOptions, TaskProvider } from "./provider.js";
+import { loadProvider } from "./providers/load.js";
+import type { Task, TaskCreateInput, TaskUpdateInput } from "./schema.js";
 
 export interface StoreContext {
 	cwd: string;
 	config: OrdnaConfig;
 	tasksDir: string;
+	provider: TaskProvider;
 }
 
 export const ARCHIVED_STATUS = "archived";
@@ -20,152 +17,116 @@ export function isKnownStatus(config: OrdnaConfig, status: string): boolean {
 	return config.statuses.includes(status);
 }
 
-export interface ListTasksOptions {
-	status?: string;
-	assignee?: string;
-	tag?: string;
-}
+/**
+ * @deprecated Use `ListOptions` from `./provider.js` instead. Kept for back-compat.
+ */
+export type ListTasksOptions = ListOptions;
 
-export function createContext(cwd = process.cwd()): StoreContext {
+/**
+ * Build a context bound to the active working directory.
+ *
+ * As of T-022 this is async: the active `TaskProvider` is resolved through
+ * `loadProvider`, which dynamically imports external plugin packages
+ * (`@frehilm/ordna-<name>`). T-023 wires `provider.init?.()` here so a
+ * remote provider can validate auth or fetch a status mapping before any
+ * `list()` / `get()` call. Errors from `init` propagate — the caller sees
+ * the real failure ("Jira: auth token expired") rather than a deeper
+ * mystery later on.
+ *
+ * One-shot CLI commands (`create`, `list`, `show`, `move`, `assign`,
+ * `commit`) do not need to call `disposeContext` afterwards — they exit
+ * naturally and the OS reclaims any resources. Only long-lived hosts
+ * (`ordna web`, `ordna board`) need an explicit dispose on shutdown.
+ */
+export async function createContext(
+	cwd: string = process.cwd(),
+): Promise<StoreContext> {
 	const config = loadConfig({ cwd });
 	const tasksDir = resolveTasksDir(config, cwd);
-	return { cwd, config, tasksDir };
+	const provider = await loadProvider(config, cwd);
+	await provider.init?.();
+	return { cwd, config, tasksDir, provider };
 }
 
-function today(): string {
-	return new Date().toISOString().slice(0, 10);
-}
-
-function slugifyTitle(title: string): string {
-	return title
-		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, "-")
-		.replace(/^-+|-+$/g, "")
-		.slice(0, 60);
-}
-
-function filenameFor(id: string, title: string, mode: SchemaMode, config: OrdnaConfig): string {
-	if (mode === "backlog") {
-		const numeric = parseId(config, id);
-		const numericPart = numeric ?? id;
-		const slug = slugifyTitle(title) || "task";
-		return `task-${numericPart} - ${slug}.md`;
+/**
+ * Best-effort cleanup of a context's provider. Used by long-lived hosts
+ * (`ordna web`, `ordna board`) on shutdown.
+ *
+ * Errors from `dispose` are caught and logged to stderr — the user is
+ * trying to quit; we shouldn't block them on a watcher's close call. If
+ * the provider doesn't implement `dispose`, this is a no-op.
+ */
+export async function disposeContext(ctx: StoreContext): Promise<void> {
+	if (!ctx.provider.dispose) return;
+	try {
+		await ctx.provider.dispose();
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		console.error(
+			`[ordna] provider "${ctx.provider.kind}" dispose failed: ${message}`,
+		);
 	}
-	return `${id}.md`;
 }
 
 export async function listTasks(
-	ctx: StoreContext = createContext(),
-	options: ListTasksOptions = {},
+	ctx?: StoreContext,
+	options: ListOptions = {},
 ): Promise<Task[]> {
-	if (!existsSync(ctx.tasksDir)) return [];
-
-	const entries = readdirSync(ctx.tasksDir, { withFileTypes: true });
-	const tasks: Task[] = [];
-	for (const entry of entries) {
-		if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
-		const filePath = join(ctx.tasksDir, entry.name);
-		const raw = await readFile(filePath, "utf8");
-		try {
-			tasks.push(parseTask(raw, filePath));
-		} catch {
-			// Skip malformed tasks silently; surfaced via dedicated validator later.
-		}
-	}
-
-	let filtered = tasks;
-	if (options.status) filtered = filtered.filter((t) => t.status === options.status);
-	if (options.assignee) filtered = filtered.filter((t) => t.assignee === options.assignee);
-	if (options.tag) filtered = filtered.filter((t) => t.tags.includes(options.tag as string));
-
-	filtered.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
-	return filtered;
+	const c = ctx ?? (await createContext());
+	return c.provider.list(options);
 }
 
-export async function getTask(id: string, ctx: StoreContext = createContext()): Promise<Task | null> {
-	const tasks = await listTasks(ctx);
-	return tasks.find((t) => t.id === id) ?? null;
+export async function getTask(
+	id: string,
+	ctx?: StoreContext,
+): Promise<Task | null> {
+	const c = ctx ?? (await createContext());
+	return c.provider.get(id);
 }
 
 export async function createTask(
 	input: TaskCreateInput,
-	ctx: StoreContext = createContext(),
+	ctx?: StoreContext,
 ): Promise<Task> {
-	if (!existsSync(ctx.tasksDir)) mkdirSync(ctx.tasksDir, { recursive: true });
-
-	const id = nextId(ctx.config, ctx.tasksDir);
-	const status = input.status ?? ctx.config.statuses[0];
-	if (!status) throw new Error("Config has no statuses defined.");
-	if (!isKnownStatus(ctx.config, status)) {
-		throw new Error(`Status "${status}" is not in configured statuses.`);
-	}
-
-	const now = today();
-	const task: Task = {
-		id,
-		title: input.title,
-		status,
-		assignee: input.assignee ?? null,
-		priority: input.priority ?? null,
-		tags: input.tags ?? [],
-		depends_on: input.depends_on ?? [],
-		created_at: now,
-		updated_at: now,
-		sections: defaultSectionsFor(ctx.config.schema),
-		extra_frontmatter: {},
-		filePath: "",
-		rawContent: "",
-	};
-
-	const filename = filenameFor(id, task.title, ctx.config.schema, ctx.config);
-	task.filePath = join(ctx.tasksDir, filename);
-	const serialized = serializeTask(task, ctx.config.schema);
-	task.rawContent = serialized;
-	await writeFile(task.filePath, serialized, "utf8");
-	return task;
+	const c = ctx ?? (await createContext());
+	return c.provider.create(input);
 }
 
 export async function updateTask(
 	id: string,
 	patch: TaskUpdateInput,
-	ctx: StoreContext = createContext(),
+	ctx?: StoreContext,
 ): Promise<Task> {
-	const existing = await getTask(id, ctx);
-	if (!existing) throw new Error(`Task ${id} not found.`);
-
-	const next: Task = {
-		...existing,
-		title: patch.title ?? existing.title,
-		status: patch.status ?? existing.status,
-		assignee: patch.assignee !== undefined ? patch.assignee : existing.assignee,
-		priority: patch.priority !== undefined ? patch.priority : existing.priority,
-		tags: patch.tags ?? existing.tags,
-		depends_on: patch.depends_on ?? existing.depends_on,
-		sections: patch.sections ?? existing.sections,
-		updated_at: today(),
-	};
-
-	if (next.status !== existing.status && !isKnownStatus(ctx.config, next.status)) {
-		throw new Error(`Status "${next.status}" is not in configured statuses.`);
+	const c = ctx ?? (await createContext());
+	if (
+		patch.status !== undefined &&
+		!isKnownStatus(c.config, patch.status)
+	) {
+		throw new Error(`Status "${patch.status}" is not in configured statuses.`);
 	}
-
-	const serialized = serializeTask(next, ctx.config.schema);
-	next.rawContent = serialized;
-	await writeFile(existing.filePath, serialized, "utf8");
-	return next;
+	return c.provider.update(id, patch);
 }
 
+/**
+ * Move a task to a new status. The `depends_on` gate is enforced here
+ * (in core) so providers don't have to re-implement the rule. The actual
+ * write is delegated to the provider.
+ */
 export async function moveTask(
 	id: string,
 	status: string,
-	ctx: StoreContext = createContext(),
+	ctx?: StoreContext,
 ): Promise<Task> {
-	const terminal = ctx.config.statuses[ctx.config.statuses.length - 1];
+	const c = ctx ?? (await createContext());
+	if (!isKnownStatus(c.config, status)) {
+		throw new Error(`Status "${status}" is not in configured statuses.`);
+	}
+	const terminal = c.config.statuses[c.config.statuses.length - 1];
 	if (status === terminal) {
-		const task = await getTask(id, ctx);
+		const task = await c.provider.get(id);
 		if (!task) throw new Error(`Task ${id} not found.`);
 		if (task.depends_on.length > 0) {
-			const all = await listTasks(ctx);
+			const all = await c.provider.list();
 			const byId = new Map(all.map((t) => [t.id, t]));
 			const unfinished = task.depends_on.filter((dep) => {
 				const d = byId.get(dep);
@@ -178,11 +139,13 @@ export async function moveTask(
 			}
 		}
 	}
-	return updateTask(id, { status }, ctx);
+	return c.provider.move(id, status);
 }
 
-export async function deleteTask(id: string, ctx: StoreContext = createContext()): Promise<void> {
-	const task = await getTask(id, ctx);
-	if (!task) throw new Error(`Task ${id} not found.`);
-	await unlink(task.filePath);
+export async function deleteTask(
+	id: string,
+	ctx?: StoreContext,
+): Promise<void> {
+	const c = ctx ?? (await createContext());
+	return c.provider.delete(id);
 }
