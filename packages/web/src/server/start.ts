@@ -141,18 +141,21 @@ export async function runWeb(options: RunWebOptions = {}): Promise<RunWebHandle>
 
 	// T-023: SIGINT/SIGTERM call close() so a future remote provider's open
 	// sockets / subscriptions get a clean shutdown when the user hits Ctrl-C.
-	// `closed` guards against double-invocation (signal arrives while close()
-	// is already in flight, or both signals fire) and removes the handlers
-	// once we're shutting down.
-	let closed = false;
+	//
+	// `closing` holds the in-flight close promise (rather than a plain
+	// boolean flag) so re-entrant callers receive the SAME promise to
+	// await. This matters because the CLI's `web` command registers its
+	// own SIGINT/SIGTERM handlers that `await handle.close()` then
+	// `process.exit(0)`. If close() short-circuited on a boolean, the
+	// CLI's await would resolve immediately while disposeContext was
+	// still mid-flight, and process.exit would kill the process before
+	// `provider.dispose()` ran.
+	let closing: Promise<void> | null = null;
 	const onSignal = (): void => {
-		if (closed) return;
 		void close();
 	};
 
-	const close = async (): Promise<void> => {
-		if (closed) return;
-		closed = true;
+	const doClose = async (): Promise<void> => {
 		process.off("SIGINT", onSignal);
 		process.off("SIGTERM", onSignal);
 		await unsubscribe();
@@ -160,11 +163,28 @@ export async function runWeb(options: RunWebOptions = {}): Promise<RunWebHandle>
 			closeAllConnections?: () => void;
 			closeIdleConnections?: () => void;
 			close: (cb: () => void) => void;
+			removeAllListeners?: (event?: string) => void;
 		};
+		// @hono/node-ws attaches an `upgrade` listener that keeps
+		// server.close()'s drain callback from firing even after all HTTP
+		// connections have been closed. Remove it explicitly so the
+		// server can actually shut down, then force-close any sockets.
+		s.removeAllListeners?.("upgrade");
 		s.closeIdleConnections?.();
 		s.closeAllConnections?.();
-		await new Promise<void>((r) => s.close(() => r()));
+		// Race server.close() against a short timeout so a stuck socket
+		// can't block disposeContext from running. The user's signal
+		// already said "stop"; dispose is the cleanup we owe them.
+		await Promise.race([
+			new Promise<void>((r) => s.close(() => r())),
+			new Promise<void>((r) => setTimeout(r, 1500)),
+		]);
 		await disposeContext(ctx);
+	};
+
+	const close = (): Promise<void> => {
+		if (!closing) closing = doClose();
+		return closing;
 	};
 
 	process.on("SIGINT", onSignal);
