@@ -131,12 +131,38 @@ export async function runWeb(options: RunWebOptions = {}): Promise<RunWebHandle>
 	if (options.openBrowser) {
 		const url = `http://${host}:${actualPort}`;
 		const { spawn } = await import("node:child_process");
-		const opener =
-			process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
 		try {
-			spawn(opener, [url], { stdio: "ignore", detached: true }).unref();
+			let child: ReturnType<typeof spawn>;
+			if (process.platform === "win32") {
+				// `start` is a cmd.exe builtin, not a PATH binary, so
+				// `spawn("start", ...)` fails with ENOENT. Invoke it
+				// through cmd. The empty "" is `start`'s window-title
+				// argument; without it, the URL is consumed as the
+				// title and no browser opens.
+				child = spawn("cmd", ["/c", "start", "", url], {
+					stdio: "ignore",
+					detached: true,
+					windowsHide: true,
+				});
+			} else {
+				const opener =
+					process.platform === "darwin" ? "open" : "xdg-open";
+				child = spawn(opener, [url], {
+					stdio: "ignore",
+					detached: true,
+				});
+			}
+			// ENOENT and other spawn failures fire async as `error`
+			// events on the child process, not as thrown exceptions —
+			// without this listener Node's default action is to crash
+			// the parent process. Best-effort: swallow.
+			child.on("error", () => {
+				// e.g. xdg-open not installed; user can open the URL manually.
+			});
+			child.unref();
 		} catch {
-			// Best-effort; ignore.
+			// Belt-and-suspenders for the rare case where spawn throws
+			// synchronously (extremely uncommon).
 		}
 	}
 
