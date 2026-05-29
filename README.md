@@ -122,6 +122,10 @@ curl -fsSL https://raw.githubusercontent.com/FreHilm/ordna/main/packages/cli/tem
 ordna skill install --from https://raw.githubusercontent.com/FreHilm/ordna/main/packages/cli/templates/AGENTS.md
 ```
 
+### Workflow skill recipes
+
+The bundled `AGENTS.md` is intentionally scoped to file format + config + CLI. Richer agent workflows — multi-step task planning, dual-reviewer pipelines, umbrella-repo orchestration — live as opt-in community recipes under [`docs/skills/`](docs/skills/). Install one with `ordna skill install --from <raw-url> --out <path>`. See the [skills README](docs/skills/README.md) for the current list.
+
 ## Host integration (IDE / Electron / agent runners)
 
 Ordna is built to be embedded. Both UIs detect a single environment variable (or programmatic option) and surface a button that POSTs the full task to your host process — your IDE then runs an agent on it.
