@@ -32,10 +32,11 @@ describe("createContext config validation for storage modes", () => {
 		expect(() => createContext(cwd)).toThrow(/`storage: hybrid` is not supported with `schema: backlog`/);
 	});
 
-	it("rejects `storage: namespace` for now (T-032)", () => {
+	it("constructs `storage: namespace` in a git repo (handed off to NamespaceBackend in T-032)", () => {
 		const cwd = makeProject("storage: namespace\n");
 		mkdirSync(join(cwd, ".git"));
-		expect(() => createContext(cwd)).toThrow(/storage: namespace.*not yet implemented/);
+		const ctx = createContext(cwd);
+		expect(ctx.backend.kind).toBe("namespace");
 	});
 
 	it("accepts `storage: hybrid` + `schema: ordna` inside a git repo", () => {

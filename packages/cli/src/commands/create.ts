@@ -28,5 +28,9 @@ export async function runCreate(title: string, options: CreateOptions = {}): Pro
 		ctx,
 	);
 	console.log(c.green(`Created ${c.bold(task.id)}: ${task.title}`));
-	console.log(c.dim(`  ${task.filePath}`));
+	// Namespace-mode tasks have no on-disk path — skip the path line
+	// rather than printing `undefined`. The id is the durable handle.
+	if (task.filePath) {
+		console.log(c.dim(`  ${task.filePath}`));
+	}
 }

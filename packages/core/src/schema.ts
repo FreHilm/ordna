@@ -27,7 +27,16 @@ export interface Task {
 	updated_at: string;
 	sections: Section[];
 	extra_frontmatter: Record<string, unknown>;
-	filePath: string;
+	/**
+	 * On-disk location of the task file.
+	 *
+	 * Set by the file and hybrid backends (tasks live as `.md` files).
+	 * **Unset** by the namespace backend — tasks there live as git
+	 * blobs at `refs/ordna/tasks/<id>` with no working-tree presence.
+	 * Consumers must guard against `undefined` (the CLI editor launcher
+	 * and the create-command path-log already do).
+	 */
+	filePath?: string;
 	rawContent: string;
 }
 

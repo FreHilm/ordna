@@ -168,6 +168,12 @@ export class FileBackend implements Backend {
 
 		const serialized = serializeTask(next, this.config.schema);
 		next.rawContent = serialized;
+		// File backend always writes filePath on create; this guard is
+		// defensive against a misconfigured Task arriving from outside
+		// the backend (e.g., a future migration script).
+		if (!existing.filePath) {
+			throw new Error(`Task ${id} has no filePath; cannot update in file mode.`);
+		}
 		await writeTaskBytes(existing.filePath, serialized);
 		return next;
 	}
@@ -176,6 +182,9 @@ export class FileBackend implements Backend {
 		await this.#ensureInit();
 		const task = await this.get(id);
 		if (!task) throw new Error(`Task ${id} not found.`);
+		if (!task.filePath) {
+			throw new Error(`Task ${id} has no filePath; cannot delete in file mode.`);
+		}
 		await deleteTaskFile(task.filePath);
 	}
 

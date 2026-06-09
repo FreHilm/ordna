@@ -10,6 +10,7 @@ import {
 } from "./storage/backend.js";
 import { FileBackend } from "./storage/backends/file.js";
 import { HybridBackend } from "./storage/backends/hybrid.js";
+import { NamespaceBackend } from "./storage/backends/namespace.js";
 
 /**
  * Public context object passed to every store function. The `backend`
@@ -74,9 +75,14 @@ export function createContext(cwd: string = process.cwd()): StoreContext {
 	}
 
 	if (config.storage === "namespace") {
-		throw new Error(
-			"ordna: `storage: namespace` is not yet implemented (T-032 in the newMode chain). Use `storage: file` or `storage: hybrid` until that ships.",
-		);
+		assertGitRepo(cwd, "namespace");
+		if (config.schema === "backlog") {
+			throw new Error(
+				"ordna: `storage: namespace` is not supported with `schema: backlog`. Backlog's filename convention has no analogue in a ref-only store; use `schema: ordna`, or stay on `storage: file` if you need Backlog.md compatibility.",
+			);
+		}
+		const backend = new NamespaceBackend(cwd, config);
+		return { cwd, config, tasksDir, backend };
 	}
 
 	const backend = new FileBackend(cwd, config, tasksDir);

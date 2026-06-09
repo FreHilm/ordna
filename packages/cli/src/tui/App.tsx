@@ -210,6 +210,13 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 
 	const launchEditor = useCallback(
 		(task: Task) => {
+			// Namespace-mode tasks live as git blobs and have no on-disk
+			// path — there's nothing to open in `$EDITOR`. Show a toast
+			// rather than spawning the editor with `undefined`.
+			if (!task.filePath) {
+				flashToast(`${task.id} has no on-disk file (namespace mode).`);
+				return;
+			}
 			const editor = process.env.EDITOR || process.env.VISUAL || "vi";
 			setRawMode?.(false);
 			const proc = spawn(editor, [task.filePath], { stdio: "inherit" });

@@ -13,9 +13,17 @@ export const configSchema = z.object({
 	webPort: z.number().int().min(1).max(65535).default(7420),
 	// T-031: storage mode selector. "file" (current default) keeps the
 	// existing on-disk layout. "hybrid" adds a sync ref for the next-id
-	// allocator + audit log. "namespace" (T-032) lands later — accepting
-	// the value here keeps the config schema stable across that change.
+	// allocator + audit log. "namespace" (T-032) stores tasks as git
+	// blobs under `refs/ordna/tasks/<id>` with no working-tree presence.
 	storage: z.enum(["file", "hybrid", "namespace"]).default("file"),
+	// T-032: namespace-mode tuning. Polling interval for the watcher
+	// (refs have no kernel-level change-notification path, so polling
+	// is the only reliable mechanism). Default 1s.
+	namespace: z
+		.object({
+			pollIntervalMs: z.number().int().min(50).default(1000),
+		})
+		.default({ pollIntervalMs: 1000 }),
 });
 
 export type OrdnaConfig = z.infer<typeof configSchema>;

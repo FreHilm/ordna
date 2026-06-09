@@ -218,6 +218,9 @@ export class HybridBackend implements Backend {
 
 		const serialized = serializeTask(next, this.config.schema);
 		next.rawContent = serialized;
+		if (!existing.filePath) {
+			throw new Error(`Task ${id} has no filePath; cannot update in hybrid mode.`);
+		}
 		await writeTaskBytes(existing.filePath, serialized);
 
 		// Light op classification: a status-change to "archived" gets
@@ -238,6 +241,9 @@ export class HybridBackend implements Backend {
 
 		const task = await this.get(id);
 		if (!task) throw new Error(`Task ${id} not found.`);
+		if (!task.filePath) {
+			throw new Error(`Task ${id} has no filePath; cannot delete in hybrid mode.`);
+		}
 		await deleteTaskFile(task.filePath);
 
 		await sync.appendOp(await this.#buildOp("delete", id));
