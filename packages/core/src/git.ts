@@ -1,33 +1,23 @@
-import { spawn } from "node:child_process";
 import type { StoreContext } from "./store.js";
 
-function run(cwd: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
-	return new Promise((resolve, reject) => {
-		const proc = spawn("git", args, { cwd });
-		let stdout = "";
-		let stderr = "";
-		proc.stdout.on("data", (chunk) => {
-			stdout += chunk.toString();
-		});
-		proc.stderr.on("data", (chunk) => {
-			stderr += chunk.toString();
-		});
-		proc.on("error", reject);
-		proc.on("close", (code) => {
-			if (code === 0) resolve({ stdout, stderr });
-			else reject(new Error(`git ${args.join(" ")} failed (${code}): ${stderr.trim()}`));
-		});
-	});
-}
-
+/**
+ * Commit pending task changes.
+ *
+ * Delegates to the active backend's optional `commit()` method. The
+ * built-in file backend implements it (stages the tasks directory and
+ * runs `git commit`); future non-file backends (hybrid keeps it for
+ * the file half; namespace deliberately omits it because tasks aren't
+ * in the working tree) leave it undefined, in which case this throws
+ * a clear error pointing the user at the right sync flow.
+ */
 export async function commitTasks(
 	ctx: StoreContext,
-	message = "chore(tasks): update",
+	message?: string,
 ): Promise<void> {
-	await run(ctx.cwd, ["add", "--", ctx.config.tasksDir]);
-	const status = await run(ctx.cwd, ["status", "--porcelain", "--", ctx.config.tasksDir]);
-	if (status.stdout.trim().length === 0) {
-		throw new Error("No task changes to commit.");
+	if (!ctx.backend.commit) {
+		throw new Error(
+			`Backend "${ctx.backend.kind}" does not support \`ordna commit\`. Use the backend's own sync flow instead.`,
+		);
 	}
-	await run(ctx.cwd, ["commit", "-m", message, "--", ctx.config.tasksDir]);
+	return ctx.backend.commit(message);
 }

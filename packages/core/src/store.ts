@@ -1,128 +1,79 @@
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
-import { readFile, unlink, writeFile } from "node:fs/promises";
-import { basename, join } from "node:path";
 import { type OrdnaConfig, loadConfig, resolveTasksDir } from "./config.js";
-import { formatId, nextId, parseId } from "./ids.js";
-import { parseTask } from "./parser.js";
-import type { SchemaMode, Section, Task, TaskCreateInput, TaskUpdateInput } from "./schema.js";
-import { defaultSectionsFor, serializeTask } from "./writer.js";
+import type { Task, TaskCreateInput, TaskUpdateInput } from "./schema.js";
+import {
+	type Backend,
+	type ListOptions,
+	ARCHIVED_STATUS,
+	isKnownStatus,
+} from "./storage/backend.js";
+import { FileBackend } from "./storage/backends/file.js";
 
+/**
+ * Public context object passed to every store function. The `backend`
+ * field carries the storage strategy chosen at `createContext` time;
+ * the strategy interface itself is private (not exported from
+ * `index.ts`).
+ *
+ * `backend` is typed as `Backend`, which is unexported, so consumers
+ * can read the field but can't declare their own `Backend`-typed
+ * variables without importing internals. That's intentional — the
+ * field is public for now (future cleanup may hide it behind a
+ * method) but the interface stays a TS-internal seam.
+ */
 export interface StoreContext {
 	cwd: string;
 	config: OrdnaConfig;
 	tasksDir: string;
+	backend: Backend;
 }
 
-export const ARCHIVED_STATUS = "archived";
+export { ARCHIVED_STATUS, isKnownStatus };
 
-export function isKnownStatus(config: OrdnaConfig, status: string): boolean {
-	if (status === ARCHIVED_STATUS) return true;
-	return config.statuses.includes(status);
-}
+/**
+ * @deprecated Use `ListOptions` from the backend layer (not exported).
+ *             Kept as the public type name for back-compat with
+ *             0.1.x consumers. Same shape.
+ */
+export type ListTasksOptions = ListOptions;
 
-export interface ListTasksOptions {
-	status?: string;
-	assignee?: string;
-	tag?: string;
-}
-
-export function createContext(cwd = process.cwd()): StoreContext {
+/**
+ * Build a context bound to the active working directory.
+ *
+ * Stays SYNCHRONOUS. The chosen backend is constructed cheaply (no
+ * I/O); the first method call on the backend triggers lazy `init()`
+ * internally. This is what lets the IDE that embeds core construct
+ * contexts without awaiting.
+ *
+ * For now this hard-codes `FileBackend`. Future modes (T-031 hybrid,
+ * T-032 namespace) will branch here on `config.storage` once that
+ * config key lands.
+ */
+export function createContext(cwd: string = process.cwd()): StoreContext {
 	const config = loadConfig({ cwd });
 	const tasksDir = resolveTasksDir(config, cwd);
-	return { cwd, config, tasksDir };
-}
-
-function today(): string {
-	return new Date().toISOString().slice(0, 10);
-}
-
-function slugifyTitle(title: string): string {
-	return title
-		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, "-")
-		.replace(/^-+|-+$/g, "")
-		.slice(0, 60);
-}
-
-function filenameFor(id: string, title: string, mode: SchemaMode, config: OrdnaConfig): string {
-	if (mode === "backlog") {
-		const numeric = parseId(config, id);
-		const numericPart = numeric ?? id;
-		const slug = slugifyTitle(title) || "task";
-		return `task-${numericPart} - ${slug}.md`;
-	}
-	return `${id}.md`;
+	const backend = new FileBackend(cwd, config, tasksDir);
+	return { cwd, config, tasksDir, backend };
 }
 
 export async function listTasks(
 	ctx: StoreContext = createContext(),
-	options: ListTasksOptions = {},
+	options: ListOptions = {},
 ): Promise<Task[]> {
-	if (!existsSync(ctx.tasksDir)) return [];
-
-	const entries = readdirSync(ctx.tasksDir, { withFileTypes: true });
-	const tasks: Task[] = [];
-	for (const entry of entries) {
-		if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
-		const filePath = join(ctx.tasksDir, entry.name);
-		const raw = await readFile(filePath, "utf8");
-		try {
-			tasks.push(parseTask(raw, filePath));
-		} catch {
-			// Skip malformed tasks silently; surfaced via dedicated validator later.
-		}
-	}
-
-	let filtered = tasks;
-	if (options.status) filtered = filtered.filter((t) => t.status === options.status);
-	if (options.assignee) filtered = filtered.filter((t) => t.assignee === options.assignee);
-	if (options.tag) filtered = filtered.filter((t) => t.tags.includes(options.tag as string));
-
-	filtered.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
-	return filtered;
+	return ctx.backend.list(options);
 }
 
-export async function getTask(id: string, ctx: StoreContext = createContext()): Promise<Task | null> {
-	const tasks = await listTasks(ctx);
-	return tasks.find((t) => t.id === id) ?? null;
+export async function getTask(
+	id: string,
+	ctx: StoreContext = createContext(),
+): Promise<Task | null> {
+	return ctx.backend.get(id);
 }
 
 export async function createTask(
 	input: TaskCreateInput,
 	ctx: StoreContext = createContext(),
 ): Promise<Task> {
-	if (!existsSync(ctx.tasksDir)) mkdirSync(ctx.tasksDir, { recursive: true });
-
-	const id = nextId(ctx.config, ctx.tasksDir);
-	const status = input.status ?? ctx.config.statuses[0];
-	if (!status) throw new Error("Config has no statuses defined.");
-	if (!isKnownStatus(ctx.config, status)) {
-		throw new Error(`Status "${status}" is not in configured statuses.`);
-	}
-
-	const now = today();
-	const task: Task = {
-		id,
-		title: input.title,
-		status,
-		assignee: input.assignee ?? null,
-		priority: input.priority ?? null,
-		tags: input.tags ?? [],
-		depends_on: input.depends_on ?? [],
-		created_at: now,
-		updated_at: now,
-		sections: defaultSectionsFor(ctx.config.schema),
-		extra_frontmatter: {},
-		filePath: "",
-		rawContent: "",
-	};
-
-	const filename = filenameFor(id, task.title, ctx.config.schema, ctx.config);
-	task.filePath = join(ctx.tasksDir, filename);
-	const serialized = serializeTask(task, ctx.config.schema);
-	task.rawContent = serialized;
-	await writeFile(task.filePath, serialized, "utf8");
-	return task;
+	return ctx.backend.create(input);
 }
 
 export async function updateTask(
@@ -130,42 +81,34 @@ export async function updateTask(
 	patch: TaskUpdateInput,
 	ctx: StoreContext = createContext(),
 ): Promise<Task> {
-	const existing = await getTask(id, ctx);
-	if (!existing) throw new Error(`Task ${id} not found.`);
-
-	const next: Task = {
-		...existing,
-		title: patch.title ?? existing.title,
-		status: patch.status ?? existing.status,
-		assignee: patch.assignee !== undefined ? patch.assignee : existing.assignee,
-		priority: patch.priority !== undefined ? patch.priority : existing.priority,
-		tags: patch.tags ?? existing.tags,
-		depends_on: patch.depends_on ?? existing.depends_on,
-		sections: patch.sections ?? existing.sections,
-		updated_at: today(),
-	};
-
-	if (next.status !== existing.status && !isKnownStatus(ctx.config, next.status)) {
-		throw new Error(`Status "${next.status}" is not in configured statuses.`);
+	if (
+		patch.status !== undefined &&
+		!isKnownStatus(ctx.config, patch.status)
+	) {
+		throw new Error(`Status "${patch.status}" is not in configured statuses.`);
 	}
-
-	const serialized = serializeTask(next, ctx.config.schema);
-	next.rawContent = serialized;
-	await writeFile(existing.filePath, serialized, "utf8");
-	return next;
+	return ctx.backend.update(id, patch);
 }
 
+/**
+ * Move a task to a new status. The `depends_on` gate stays in core so
+ * backends don't have to re-implement Ordna's business rules — the
+ * gate fires here, then the actual write is delegated to the backend.
+ */
 export async function moveTask(
 	id: string,
 	status: string,
 	ctx: StoreContext = createContext(),
 ): Promise<Task> {
+	if (!isKnownStatus(ctx.config, status)) {
+		throw new Error(`Status "${status}" is not in configured statuses.`);
+	}
 	const terminal = ctx.config.statuses[ctx.config.statuses.length - 1];
 	if (status === terminal) {
-		const task = await getTask(id, ctx);
+		const task = await ctx.backend.get(id);
 		if (!task) throw new Error(`Task ${id} not found.`);
 		if (task.depends_on.length > 0) {
-			const all = await listTasks(ctx);
+			const all = await ctx.backend.list();
 			const byId = new Map(all.map((t) => [t.id, t]));
 			const unfinished = task.depends_on.filter((dep) => {
 				const d = byId.get(dep);
@@ -178,11 +121,12 @@ export async function moveTask(
 			}
 		}
 	}
-	return updateTask(id, { status }, ctx);
+	return ctx.backend.update(id, { status });
 }
 
-export async function deleteTask(id: string, ctx: StoreContext = createContext()): Promise<void> {
-	const task = await getTask(id, ctx);
-	if (!task) throw new Error(`Task ${id} not found.`);
-	await unlink(task.filePath);
+export async function deleteTask(
+	id: string,
+	ctx: StoreContext = createContext(),
+): Promise<void> {
+	return ctx.backend.delete(id);
 }
