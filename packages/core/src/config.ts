@@ -11,6 +11,11 @@ export const configSchema = z.object({
 	idPrefix: z.string().default("T"),
 	zeroPaddedIds: z.number().int().min(0).max(10).default(3),
 	webPort: z.number().int().min(1).max(65535).default(7420),
+	// T-031: storage mode selector. "file" (current default) keeps the
+	// existing on-disk layout. "hybrid" adds a sync ref for the next-id
+	// allocator + audit log. "namespace" (T-032) lands later — accepting
+	// the value here keeps the config schema stable across that change.
+	storage: z.enum(["file", "hybrid", "namespace"]).default("file"),
 });
 
 export type OrdnaConfig = z.infer<typeof configSchema>;

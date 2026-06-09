@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { type OrdnaConfig, loadConfig, resolveTasksDir } from "./config.js";
 import type { Task, TaskCreateInput, TaskUpdateInput } from "./schema.js";
 import {
@@ -7,6 +9,7 @@ import {
 	isKnownStatus,
 } from "./storage/backend.js";
 import { FileBackend } from "./storage/backends/file.js";
+import { HybridBackend } from "./storage/backends/hybrid.js";
 
 /**
  * Public context object passed to every store function. The `backend`
@@ -44,15 +47,56 @@ export type ListTasksOptions = ListOptions;
  * internally. This is what lets the IDE that embeds core construct
  * contexts without awaiting.
  *
- * For now this hard-codes `FileBackend`. Future modes (T-031 hybrid,
- * T-032 namespace) will branch here on `config.storage` once that
- * config key lands.
+ * Backend selection is driven by `config.storage`. Combinations that
+ * make no sense are rejected eagerly so the user sees a clear error
+ * up front rather than a confusing failure deep inside a method call.
+ *
+ *  - `storage: hybrid` requires a git repository (`.git/` present at
+ *    `cwd` or any parent)
+ *  - `storage: hybrid` + `schema: backlog` is rejected — the audit-
+ *    log model and Backlog's filename conventions are out of scope
+ *    for v1 to combine
+ *  - `storage: namespace` is reserved for T-032; rejected for now
  */
 export function createContext(cwd: string = process.cwd()): StoreContext {
 	const config = loadConfig({ cwd });
 	const tasksDir = resolveTasksDir(config, cwd);
+
+	if (config.storage === "hybrid") {
+		assertGitRepo(cwd, "hybrid");
+		if (config.schema === "backlog") {
+			throw new Error(
+				"ordna: `storage: hybrid` is not supported with `schema: backlog` in v1. Use `schema: ordna`, or stay on `storage: file` if you need Backlog.md compatibility.",
+			);
+		}
+		const backend = new HybridBackend(cwd, config, tasksDir);
+		return { cwd, config, tasksDir, backend };
+	}
+
+	if (config.storage === "namespace") {
+		throw new Error(
+			"ordna: `storage: namespace` is not yet implemented (T-032 in the newMode chain). Use `storage: file` or `storage: hybrid` until that ships.",
+		);
+	}
+
 	const backend = new FileBackend(cwd, config, tasksDir);
 	return { cwd, config, tasksDir, backend };
+}
+
+function assertGitRepo(cwd: string, mode: "hybrid" | "namespace"): void {
+	// Walk up from cwd looking for a `.git/` directory. A bare repo
+	// would lack the working tree but still has `.git` as a file
+	// pointer or directory; we accept either.
+	let dir = cwd;
+	for (let i = 0; i < 64; i++) {
+		if (existsSync(join(dir, ".git"))) return;
+		const parent = join(dir, "..");
+		if (parent === dir) break;
+		dir = parent;
+	}
+	throw new Error(
+		`ordna: \`storage: ${mode}\` requires a git repository. Run \`git init\` in this directory, or switch back to \`storage: file\` in .ordna/config.yaml.`,
+	);
 }
 
 export async function listTasks(
