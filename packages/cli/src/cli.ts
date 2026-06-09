@@ -21,7 +21,26 @@ export function buildProgram(): Command {
 	program
 		.command("init")
 		.description("Create .ordna/config.yaml and tasks/ if missing")
-		.action(() => runInit());
+		.option(
+			"-s, --storage <mode>",
+			"explicit storage mode: file | hybrid | namespace (skips auto-detect)",
+		)
+		.action(async (opts: { storage?: string }) => {
+			const storage =
+				opts.storage === "file" ||
+				opts.storage === "hybrid" ||
+				opts.storage === "namespace"
+					? opts.storage
+					: undefined;
+			if (opts.storage && !storage) {
+				console.error(
+					`Invalid --storage value: "${opts.storage}". Use file, hybrid, or namespace.`,
+				);
+				process.exitCode = 1;
+				return;
+			}
+			await runInit(storage ? { storage } : {});
+		});
 
 	program
 		.command("list")

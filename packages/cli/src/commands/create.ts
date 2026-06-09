@@ -1,4 +1,5 @@
-import { createContext, createTask, type Priority } from "@frehilm/ordna-core";
+import { createTask, type Priority } from "@frehilm/ordna-core";
+import { ensureContextOrExit } from "../lib/ensure-context.js";
 import { c } from "../colors.js";
 
 export interface CreateOptions {
@@ -15,7 +16,7 @@ export async function runCreate(title: string, options: CreateOptions = {}): Pro
 		process.exitCode = 1;
 		return;
 	}
-	const ctx = createContext();
+	const ctx = await ensureContextOrExit();
 	const task = await createTask(
 		{
 			title,

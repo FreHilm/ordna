@@ -1,4 +1,5 @@
-import { createContext, listTasks } from "@frehilm/ordna-core";
+import { listTasks } from "@frehilm/ordna-core";
+import { ensureContextOrExit } from "../lib/ensure-context.js";
 import { c } from "../colors.js";
 import { formatListRow, summarizeStatuses } from "../format.js";
 
@@ -9,7 +10,7 @@ export interface ListOptions {
 }
 
 export async function runList(options: ListOptions = {}): Promise<void> {
-	const ctx = createContext();
+	const ctx = await ensureContextOrExit();
 	const tasks = await listTasks(ctx, options);
 	if (tasks.length === 0) {
 		console.log(c.dim("No tasks. Create one with `ordna create \"title\"`."));

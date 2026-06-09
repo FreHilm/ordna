@@ -160,6 +160,31 @@ webPort: 7420                           # default port for `ordna web`
 - `statuses` defines the columns 1:1, in order. The first status is the
   default for newly-created tasks unless `--status` is passed.
 
+### Storage mode (important for agents)
+
+The config may set `storage:` to one of three values. **Check this before
+assuming you can read or write `tasks/*.md`:**
+
+- **`storage: file`** (default) — everything documented above applies. Tasks
+  are markdown files in `tasksDir`; you can `cat`, `grep`, and edit them
+  directly. This is what most projects use.
+- **`storage: hybrid`** — tasks are still files in `tasksDir`, AND a git
+  ref (`refs/ordna/state`) holds a shared next-id allocator + audit log.
+  Read/write the files normally; ID allocation goes through the ref under
+  the hood (no agent action needed). You can still `cat` and `grep`.
+- **`storage: namespace`** — tasks live as **git blobs** at
+  `refs/ordna/tasks/<id>`. **There are no task files on disk.** `cat
+  tasks/T-001.md` will fail. Use the CLI (`ordna show T-001`, `ordna
+  list`, `ordna create`, etc.) for everything — direct file access is
+  not possible.
+
+When in doubt, run `ordna list` and inspect the output rather than
+walking `tasks/` directly. If the user hasn't picked a mode yet, the
+first CLI invocation auto-detects (existing tasks → file; existing refs
+→ the matching mode) or prompts them on the TUI / web. Agents typically
+hit this through the CLI's non-interactive error message ("set
+`ORDNA_STORAGE=file|hybrid|namespace`").
+
 ---
 
 ## 4. The `ordna` CLI

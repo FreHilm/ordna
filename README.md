@@ -70,6 +70,8 @@ tasks/T-002.md
 
 Each is a regular markdown file. Edit them in `$EDITOR` and the board updates live.
 
+First run also auto-detects the storage mode based on what's already in your project — existing `tasks/*.md` → `file`, existing `refs/ordna/state` → `hybrid`, existing `refs/ordna/tasks/*` → `namespace`. In a fresh git repo with no signals, the TUI / web prompt you to pick; the CLI fails with a hint if it's not interactive (set `ORDNA_STORAGE=file|hybrid|namespace` to skip the prompt in CI).
+
 ## Packages
 
 | Package | What it is | Install |

@@ -49,3 +49,11 @@ export {
 } from "./store.js";
 export { defaultSectionsFor, serializeTask } from "./writer.js";
 export { watchTasks, type TaskEvent, type TaskEventListener, type WatchOptions } from "./watcher.js";
+export {
+	type DetectedMode,
+	NeedsModeSelection,
+	detectStorageMode,
+	ensureStorageConfig,
+	readEnvStorageMode,
+	writeStorageConfig,
+} from "./storage/auto-detect.js";

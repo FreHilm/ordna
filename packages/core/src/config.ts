@@ -47,7 +47,24 @@ export function loadConfig(options: LoadConfigOptions = {}): OrdnaConfig {
 		fromFile = parseYaml(raw) ?? {};
 	}
 
-	const merged = { ...(fromFile as object), ...(options.overrides ?? {}) };
+	const merged: Record<string, unknown> = {
+		...(fromFile as object),
+		...(options.overrides ?? {}),
+	};
+
+	// T-033: `ORDNA_STORAGE` is a runtime override — when set to one of
+	// the known modes, it wins over whatever the YAML says. CI uses
+	// this to pin storage without writing a file; tests use it to
+	// exercise specific modes without polluting the test directory.
+	const envStorage = process.env.ORDNA_STORAGE;
+	if (
+		envStorage === "file" ||
+		envStorage === "hybrid" ||
+		envStorage === "namespace"
+	) {
+		merged.storage = envStorage;
+	}
+
 	return configSchema.parse(merged);
 }
 
