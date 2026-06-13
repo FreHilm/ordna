@@ -58,6 +58,7 @@ export function App(): JSX.Element {
 	const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>(null);
 	const [paletteOpen, setPaletteOpen] = useState(false);
 	const [cheatOpen, setCheatOpen] = useState(false);
+	const [isFetching, setIsFetching] = useState(false);
 
 	useEffect(() => {
 		document.documentElement.setAttribute("data-theme", theme);
@@ -112,6 +113,26 @@ export function App(): JSX.Element {
 		[],
 	);
 
+	const runFetch = useCallback(async () => {
+		if (isFetching) return;
+		setIsFetching(true);
+		try {
+			const result = await api.fetchRemote();
+			const refs = result.refsUpdated;
+			const msg =
+				refs === 0
+					? `Up to date · ${result.durationMs}ms`
+					: `Fetched ${refs} ref${refs === 1 ? "" : "s"} · ${result.durationMs}ms`;
+			setToast({ message: msg, kind: "info" });
+			window.setTimeout(() => setToast(null), 2500);
+		} catch (e) {
+			setToast({ message: (e as Error).message, kind: "error" });
+			window.setTimeout(() => setToast(null), 4000);
+		} finally {
+			setIsFetching(false);
+		}
+	}, [isFetching]);
+
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent): void => {
 			const target = e.target as HTMLElement | null;
@@ -141,6 +162,9 @@ export function App(): JSX.Element {
 			} else if (e.key === "?") {
 				e.preventDefault();
 				setCheatOpen((c) => !c);
+			} else if (e.key === "r" && config?.capabilities?.fetch) {
+				e.preventDefault();
+				void runFetch();
 			} else if (e.key === "Escape") {
 				if (paletteOpen) setPaletteOpen(false);
 				else if (cheatOpen) setCheatOpen(false);
@@ -148,7 +172,7 @@ export function App(): JSX.Element {
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
-	}, [paletteOpen, cheatOpen, toggleTheme]);
+	}, [paletteOpen, cheatOpen, toggleTheme, config?.capabilities?.fetch, runFetch]);
 
 	const filtered = useMemo<WireTask[]>(() => {
 		const q = query.trim().toLowerCase();
@@ -317,6 +341,17 @@ export function App(): JSX.Element {
 				>
 					{theme === "dark" ? <Icon.Sun /> : <Icon.Moon />}
 				</button>
+				{config?.capabilities?.fetch ? (
+					<button
+						type="button"
+						className="btn-icon"
+						title="Fetch updates from remote (R)"
+						disabled={isFetching}
+						onClick={runFetch}
+					>
+						<Icon.Refresh />
+					</button>
+				) : null}
 				<button
 					type="button"
 					className="btn btn-primary"

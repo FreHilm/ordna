@@ -9,6 +9,7 @@ import type { TaskEvent, TaskEventListener } from "../../watcher.js";
 import {
 	ARCHIVED_STATUS,
 	type Backend,
+	type FetchResult,
 	type ListOptions,
 	isKnownStatus,
 } from "../backend.js";
@@ -86,6 +87,11 @@ export class NamespaceBackend implements Backend {
 	#listeners = new Set<TaskEventListener>();
 	#lastSnapshot = new Map<string, string>(); // refname → oid
 	#pollIntervalMs: number;
+	#autoFetchIntervalMs: number;
+	#autoFetchTimer: ReturnType<typeof setTimeout> | null = null;
+	#autoFetchInFlight: Promise<FetchResult> | null = null;
+	#remoteChecked = false;
+	#remoteExists = false;
 	#disposed = false;
 
 	constructor(
@@ -94,6 +100,7 @@ export class NamespaceBackend implements Backend {
 	) {
 		this.#git = new GitRunner(cwd);
 		this.#pollIntervalMs = config.namespace?.pollIntervalMs ?? 1000;
+		this.#autoFetchIntervalMs = config.namespace?.autoFetchIntervalMs ?? 60000;
 	}
 
 	async init(): Promise<void> {
@@ -103,6 +110,9 @@ export class NamespaceBackend implements Backend {
 			NAMESPACE_PUSH_REFSPEC,
 			"ordna-namespace",
 		);
+		if (this.#autoFetchIntervalMs > 0) {
+			this.#scheduleAutoFetch();
+		}
 	}
 
 	async #ensureInit(): Promise<void> {
@@ -115,6 +125,20 @@ export class NamespaceBackend implements Backend {
 		if (this.#pollTimer) {
 			clearTimeout(this.#pollTimer);
 			this.#pollTimer = null;
+		}
+		if (this.#autoFetchTimer) {
+			clearTimeout(this.#autoFetchTimer);
+			this.#autoFetchTimer = null;
+		}
+		// Let any in-flight auto-fetch finish so its results are
+		// applied / errors logged before we tear down. Manual fetch()
+		// is awaited by the caller directly so it can't outlive dispose.
+		if (this.#autoFetchInFlight) {
+			try {
+				await this.#autoFetchInFlight;
+			} catch {
+				// already logged in #runAutoFetch
+			}
 		}
 		this.#listeners.clear();
 		this.#lastSnapshot.clear();
@@ -329,6 +353,25 @@ export class NamespaceBackend implements Backend {
 		// "working tree stays clean" model better.
 	}
 
+	// ---------------- fetch ----------------
+
+	async fetch(): Promise<FetchResult> {
+		await this.#ensureInit();
+		const start = Date.now();
+		await this.#checkRemote();
+		if (!this.#remoteExists) return { refsUpdated: 0, durationMs: 0 };
+
+		// Snapshot before/after so we can report how many refs the fetch
+		// actually changed. The watcher's poll loop will pick the same
+		// diffs up on its next tick and emit task events — we don't
+		// emit directly from here.
+		const before = await this.#snapshotRefs();
+		await this.#git.fetchRefspec(NAMESPACE_PUSH_REFSPEC);
+		const after = await this.#snapshotRefs();
+		const changed = this.#countRefDiff(before, after);
+		return { refsUpdated: changed, durationMs: Date.now() - start };
+	}
+
 	// ---------------- internals ----------------
 
 	async #allocateNextId(): Promise<string> {
@@ -430,6 +473,61 @@ export class NamespaceBackend implements Backend {
 				const msg = err instanceof Error ? err.message : String(err);
 				console.error(`[ordna-namespace] listener threw: ${msg}`);
 			}
+		}
+	}
+
+	async #checkRemote(): Promise<void> {
+		if (this.#remoteChecked) return;
+		this.#remoteChecked = true;
+		this.#remoteExists = await this.#git.hasRemote();
+	}
+
+	async #snapshotRefs(): Promise<Map<string, string>> {
+		const refs = await this.#git.forEachRef(TASK_REF_PATTERN);
+		const map = new Map<string, string>();
+		for (const { refname, oid } of refs) map.set(refname, oid);
+		return map;
+	}
+
+	#countRefDiff(
+		prev: Map<string, string>,
+		next: Map<string, string>,
+	): number {
+		let changed = 0;
+		for (const [refname, oid] of next) {
+			if (prev.get(refname) !== oid) changed++;
+		}
+		for (const refname of prev.keys()) {
+			if (!next.has(refname)) changed++;
+		}
+		return changed;
+	}
+
+	#scheduleAutoFetch(): void {
+		if (this.#disposed || this.#autoFetchIntervalMs <= 0) return;
+		const t = setTimeout(() => {
+			this.#autoFetchTimer = null;
+			void this.#runAutoFetch();
+		}, this.#autoFetchIntervalMs);
+		// Don't keep the Node process alive on the auto-fetch timer
+		// alone — same posture as the poll and push timers.
+		(t as unknown as { unref?: () => void }).unref?.();
+		this.#autoFetchTimer = t;
+	}
+
+	async #runAutoFetch(): Promise<void> {
+		if (this.#disposed) return;
+		try {
+			this.#autoFetchInFlight = this.fetch();
+			await this.#autoFetchInFlight;
+		} catch (err) {
+			// Soft-fail: no network, no remote, transient error. Logged
+			// but never fatal — the next tick retries.
+			const msg = err instanceof Error ? err.message : String(err);
+			console.error(`[ordna-namespace] auto-fetch failed: ${msg}`);
+		} finally {
+			this.#autoFetchInFlight = null;
+			if (!this.#disposed) this.#scheduleAutoFetch();
 		}
 	}
 }

@@ -1,8 +1,10 @@
 import { spawn } from "node:child_process";
 import {
 	ARCHIVED_STATUS,
+	canFetch,
 	createContext as createStoreContext,
 	createTask,
+	fetchTasks,
 	listTasks,
 	moveTask,
 	updateTask,
@@ -288,6 +290,22 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 		}
 	};
 
+	const fetchSupported = canFetch(ctx);
+	const runFetch = async (): Promise<void> => {
+		if (!fetchSupported) return;
+		flashToast("Fetching…");
+		try {
+			const result = await fetchTasks(ctx);
+			flashToast(
+				result.refsUpdated === 0
+					? `Up to date · ${result.durationMs}ms`
+					: `Fetched ${result.refsUpdated} ref${result.refsUpdated === 1 ? "" : "s"} · ${result.durationMs}ms`,
+			);
+		} catch (error) {
+			flashToast((error as Error).message);
+		}
+	};
+
 	const applySidebarFocused = (): void => {
 		if (sidebarFocusedKey === null) return;
 		const row = flatRows.find((r) => rowKey(r.item) === sidebarFocusedKey);
@@ -405,6 +423,8 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 			} else if (input === "f") {
 				setSidebarPinned((p) => !p);
 				setSidebarPeek(false);
+			} else if (input === "r" && canFetch(ctx)) {
+				void runFetch();
 			} else if (input === "/") {
 				setMode({ kind: "search" });
 			} else if (key.escape && searchQuery) {
@@ -648,6 +668,7 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 		{ keys: "E", label: "$EDITOR" },
 		{ keys: "x", label: "archive" },
 		...(agentHook ? [{ keys: "g", label: agentHook.label.toLowerCase() }] : []),
+		...(fetchSupported ? [{ keys: "r", label: "fetch" }] : []),
 		{ keys: "/", label: "find" },
 		{ keys: "q", label: "quit" },
 	];

@@ -70,7 +70,7 @@ tasks/T-002.md
 
 Each is a regular markdown file. Edit them in `$EDITOR` and the board updates live.
 
-First run also auto-detects the storage mode based on what's already in your project — existing `tasks/*.md` → `file`, existing `refs/ordna/state` → `hybrid`, existing `refs/ordna/tasks/*` → `namespace`. In a fresh git repo with no signals, the TUI / web prompt you to pick; the CLI fails with a hint if it's not interactive (set `ORDNA_STORAGE=file|hybrid|namespace` to skip the prompt in CI).
+On first run, Ordna auto-detects which **storage mode** fits your project (existing files vs existing git refs vs neither). The default is `file` — see [Storage modes](#storage-modes) below for the alternatives and when to pick them.
 
 ## Packages
 
@@ -81,6 +81,120 @@ First run also auto-detects the storage mode based on what's already in your pro
 | [`@frehilm/ordna-web`](packages/web/README.md)   | Hono server + React SPA — the browser Kanban | `pnpm add @frehilm/ordna-web` |
 
 The two UI packages **re-export the full core API**. So if you want both data access and a UI, you only ever install one Ordna package.
+
+## Storage modes
+
+Ordna ships three storage backends. Pick one per project — it changes
+where tasks live on disk and how they sync. `file` is the default and the
+right answer for most workflows; the other two are opt-in for specific
+constraints.
+
+| | **`file`** (default) | **`hybrid`** | **`namespace`** |
+|---|---|---|---|
+| Where tasks live | `tasks/*.md` files | `tasks/*.md` files + a git ref (`refs/ordna/state`) | Git refs (`refs/ordna/tasks/<id>`), one per task, pointing at blobs |
+| Working tree | Tasks visible as files | Tasks visible as files | Untouched — no `tasks/` dir |
+| Requires git | No | Yes | Yes |
+| Multi-machine sync | Regular `git push` / `pull` | Same + synced ID allocator | Automatic push per write; fetch on 60s timer (configurable) or manual |
+| Safe IDs across offline writers | No (collisions possible) | Yes (CAS on state ref) | Yes (CAS per-task ref) |
+| Per-task history | `git log tasks/T-001.md` | Same as file (+ state-ref audit log) | None — refs point at blobs, no commit chain |
+| `cat tasks/T-001.md` works | Yes | Yes | No — use `ordna show T-001` |
+| Agents read files directly | Yes | Yes | No — via `ordna` CLI only |
+| Task edits show in PRs | Yes (regular file diff) | Yes (regular file diff) | No — refs aren't in the branch tree |
+| `ordna commit` | Stages `tasks/` + commits | Stages `tasks/` + commits | No-op (nothing to stage) |
+| `schema: backlog` supported | Yes | No | No |
+
+### `file` (default)
+
+Tasks are plain markdown files in `tasks/`. The Kanban is computed from
+the files. This is the "files are the API" mode — anything that can read
+a file can read a task: `cat`, `grep`, your IDE, a coding agent. Commits
+are explicit, so task edits ride along in PRs like any other diff.
+
+**Pick this when:** solo or small team, agents involved, or you want PR
+review of task changes. This is the documented default and matches the
+bundled `AGENTS.md` verbatim.
+
+**Watch out for:** ID collisions across offline writers. Two collaborators
+creating a task at the same time on different machines will both pick the
+next sequential ID; the merge-second one renumbers manually.
+
+### `hybrid`
+
+Same on-disk layout as `file` — tasks are still markdown files in
+`tasks/` — but a git ref `refs/ordna/state` holds a synced next-id
+allocator and audit log. Reads and edits look identical to `file` mode;
+the difference is that `create` does a compare-and-swap on the state ref
+to claim the next ID, so two offline writers can't both pick `T-042`.
+
+**Pick this when:** you want file-mode ergonomics but multi-machine
+collaboration is real and ID collisions have bitten you.
+
+**Watch out for:** requires a git repo. `schema: backlog` is not
+supported. Task file content still syncs via regular `git pull`; only the
+state ref auto-fetches (on CAS conflict during a write).
+
+### `namespace`
+
+Tasks live as git **blobs** under `refs/ordna/tasks/<id>` — one ref per
+task, no working-tree files. `git status` stays clean. `git log` on
+branches doesn't see task mutations. Sync is automatic: every
+create/update/delete schedules a push of `+refs/ordna/tasks/*:refs/ordna/tasks/*`.
+Pulling other people's updates is via an auto-fetch timer (default 60s,
+configurable) plus a manual fetch — button in the web header, `r` in the
+TUI.
+
+**Pick this when:** you need the working tree pristine. E.g. the repo
+ships as a published library and you don't want `tasks/` in the package,
+or you want strict separation between "task state" and "code state."
+
+**Watch out for:**
+
+- Standard `git clone` does **not** pull task refs. Teammates must run
+  `git fetch origin '+refs/ordna/tasks/*:refs/ordna/tasks/*'` once after
+  cloning, or add the refspec to `.git/config`.
+- No PR review of task changes — refs aren't in the branch tree.
+- No `git blame` per task — there's no commit chain, only the current
+  blob is reachable through the ref.
+- Direct file tools (`cat`, IDE search, agents reading files) can't see
+  tasks. Everything goes through the `ordna` CLI.
+- `schema: backlog` is not supported.
+
+### Auto-detection
+
+With no `.ordna/config.yaml`, Ordna inspects the project on first run
+and picks a mode:
+
+1. `refs/ordna/tasks/*` exist → `namespace`
+2. `refs/ordna/state` exists → `hybrid`
+3. `tasks/*.md` exist → `file`
+4. cwd is a git repo, none of the above → prompts (TUI modal, web setup
+   page, CLI `1/2/3` on a TTY)
+5. else (not a git repo, no signals) → silently uses `file`
+
+Confident detections (1–3) write `.ordna/config.yaml` so the choice is
+durable across runs and visible to anyone reading the repo. Branch (4) is
+interactive — the CLI exits with a hint when stdin isn't a TTY, so CI is
+predictable.
+
+### Configuration
+
+```yaml
+# .ordna/config.yaml
+storage: file        # or "hybrid" or "namespace"
+
+# Namespace-mode tuning — ignored in file/hybrid:
+namespace:
+  pollIntervalMs: 1000        # how often the watcher checks for ref changes
+  autoFetchIntervalMs: 60000  # background fetch from origin (0 disables)
+```
+
+### `ORDNA_STORAGE` env var
+
+`ORDNA_STORAGE=file|hybrid|namespace` overrides both
+`.ordna/config.yaml` and auto-detection for a single process. Runtime
+only — never written to disk. Use it for CI (predictable mode, no
+on-disk side effects) and for tests pinning a specific mode against
+arbitrary directories.
 
 ## Agent skill (AGENTS.md)
 

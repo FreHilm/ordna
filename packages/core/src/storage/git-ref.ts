@@ -152,6 +152,15 @@ export class GitRunner {
 	}
 
 	/**
+	 * Fetch a refspec (single ref or wildcard) from a remote. Used by
+	 * namespace mode to pull `+refs/ordna/tasks/*:refs/ordna/tasks/*` —
+	 * the same refspec format `pushRef` accepts.
+	 */
+	async fetchRefspec(refspec: string, remote = "origin"): Promise<void> {
+		await this.run(["fetch", remote, refspec]);
+	}
+
+	/**
 	 * Push a refspec to a remote. The refspec can be a single
 	 * `<src>:<dst>` or a glob `+refs/foo/*:refs/foo/*`.
 	 */

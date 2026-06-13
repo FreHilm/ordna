@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createContext, createTask, deleteTask, getTask, listTasks, moveTask, updateTask } from "../store.js";
+import { canFetch, createContext, createTask, deleteTask, fetchTasks, getTask, listTasks, moveTask, updateTask } from "../store.js";
 import { commitTasks } from "../git.js";
 import { watchTasks, type TaskEvent } from "../watcher.js";
 import { GitRunner } from "../storage/git-ref.js";
@@ -190,6 +190,64 @@ describe("NamespaceBackend — config validation", () => {
 		expect(() => createContext(cwd)).toThrow(
 			/`storage: namespace` is not supported with `schema: backlog`/,
 		);
+	});
+});
+
+describe("NamespaceBackend — fetch capability", () => {
+	it("canFetch(ctx) is true for namespace, false for file", async () => {
+		const { cwd } = await setupNamespaceRepo("namespace:\n  autoFetchIntervalMs: 0\n");
+		const ns = createContext(cwd);
+		expect(canFetch(ns)).toBe(true);
+
+		const fileCwd = mkdtempSync(join(tmpdir(), "ordna-file-fetch-"));
+		tmpDirs.push(fileCwd);
+		mkdirSync(join(fileCwd, ".ordna"), { recursive: true });
+		writeFileSync(
+			join(fileCwd, ".ordna", "config.yaml"),
+			"storage: file\nschema: ordna\n",
+			"utf8",
+		);
+		const file = createContext(fileCwd);
+		expect(canFetch(file)).toBe(false);
+		await expect(fetchTasks(file)).rejects.toThrow(/doesn't support fetch/);
+	});
+
+	it("fetch() with no remote is a quiet no-op (refsUpdated: 0)", async () => {
+		// autoFetchIntervalMs: 0 disables the background timer so the
+		// test doesn't race with it.
+		const { cwd } = await setupNamespaceRepo("namespace:\n  autoFetchIntervalMs: 0\n");
+		const ctx = createContext(cwd);
+		await createTask({ title: "Local only" }, ctx);
+		const result = await fetchTasks(ctx);
+		expect(result.refsUpdated).toBe(0);
+		expect(result.durationMs).toBe(0);
+	});
+
+	it("fetch() pulls in refs from origin", async () => {
+		// Bare origin shared by two clones.
+		const origin = mkdtempSync(join(tmpdir(), "ordna-namespace-origin-"));
+		tmpDirs.push(origin);
+		const originGit = new GitRunner(origin);
+		await originGit.run(["init", "--bare", "--initial-branch=main", "--quiet"]);
+
+		// Clone A (the one we'll fetch into).
+		const { cwd: cwdA, git: gitA } = await setupNamespaceRepo("namespace:\n  autoFetchIntervalMs: 0\n");
+		await gitA.run(["remote", "add", "origin", origin]);
+
+		// Clone B (the one that publishes a task).
+		const { cwd: cwdB, git: gitB } = await setupNamespaceRepo("namespace:\n  autoFetchIntervalMs: 0\n");
+		await gitB.run(["remote", "add", "origin", origin]);
+		const ctxB = createContext(cwdB);
+		await createTask({ title: "From B" }, ctxB);
+		// Wait for B's debounced auto-push to land on origin.
+		await ctxB.backend.dispose();
+
+		// Now A fetches and sees one new ref.
+		const ctxA = createContext(cwdA);
+		const result = await fetchTasks(ctxA);
+		expect(result.refsUpdated).toBeGreaterThanOrEqual(1);
+		const visible = await listTasks(ctxA);
+		expect(visible.map((t) => t.id)).toContain("T-001");
 	});
 });
 

@@ -7,9 +7,20 @@ export interface AgentHookInfo {
 	label: string;
 }
 
+export interface UiCapabilities {
+	fetch: boolean;
+}
+
 export type UiConfig = OrdnaConfig & {
 	agentHook: AgentHookInfo | null;
+	capabilities: UiCapabilities;
 };
+
+export interface FetchResponse {
+	ok: true;
+	refsUpdated: number;
+	durationMs: number;
+}
 
 export type WireTask = Omit<Task, "rawContent">;
 

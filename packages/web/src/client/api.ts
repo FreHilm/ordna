@@ -1,4 +1,4 @@
-import type { UiConfig, WireTask } from "../shared/types.js";
+import type { FetchResponse, UiConfig, WireTask } from "../shared/types.js";
 
 async function json<T>(res: Response): Promise<T> {
 	if (!res.ok) {
@@ -44,4 +44,6 @@ export const api = {
 		fetch(`/api/tasks/${encodeURIComponent(id)}/agent`, { method: "POST" }).then((r) =>
 			json<{ ok: true }>(r),
 		),
+	fetchRemote: (): Promise<FetchResponse> =>
+		fetch("/api/fetch", { method: "POST" }).then((r) => json<FetchResponse>(r)),
 };

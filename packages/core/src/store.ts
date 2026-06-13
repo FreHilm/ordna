@@ -4,6 +4,7 @@ import { type OrdnaConfig, loadConfig, resolveTasksDir } from "./config.js";
 import type { Task, TaskCreateInput, TaskUpdateInput } from "./schema.js";
 import {
 	type Backend,
+	type FetchResult,
 	type ListOptions,
 	ARCHIVED_STATUS,
 	isKnownStatus,
@@ -179,4 +180,27 @@ export async function deleteTask(
 	ctx: StoreContext = createContext(),
 ): Promise<void> {
 	return ctx.backend.delete(id);
+}
+
+/**
+ * Pull remote updates into the active backend. Only namespace
+ * implements this in v1 — see `Backend.fetch` for the rationale.
+ *
+ * File / hybrid throw a clear error so callers (UI buttons, CLI
+ * commands) can show a useful message rather than silently no-op.
+ */
+export async function fetchTasks(
+	ctx: StoreContext = createContext(),
+): Promise<FetchResult> {
+	if (typeof ctx.backend.fetch !== "function") {
+		throw new Error(
+			`storage: ${ctx.backend.kind} doesn't support fetch (namespace only in v1)`,
+		);
+	}
+	return ctx.backend.fetch();
+}
+
+/** True if the active backend exposes a `fetch()` capability. */
+export function canFetch(ctx: StoreContext): boolean {
+	return typeof ctx.backend.fetch === "function";
 }

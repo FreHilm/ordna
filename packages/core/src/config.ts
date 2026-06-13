@@ -18,12 +18,17 @@ export const configSchema = z.object({
 	storage: z.enum(["file", "hybrid", "namespace"]).default("file"),
 	// T-032: namespace-mode tuning. Polling interval for the watcher
 	// (refs have no kernel-level change-notification path, so polling
-	// is the only reliable mechanism). Default 1s.
+	// is the only reliable mechanism). Default 1s. `autoFetchIntervalMs`
+	// runs `git fetch origin '+refs/ordna/tasks/*:refs/ordna/tasks/*'`
+	// in the background so other machines' updates land without manual
+	// pulls; set to 0 to disable auto-fetch entirely (manual fetch via
+	// the TUI / web button still works).
 	namespace: z
 		.object({
 			pollIntervalMs: z.number().int().min(50).default(1000),
+			autoFetchIntervalMs: z.number().int().min(0).default(60000),
 		})
-		.default({ pollIntervalMs: 1000 }),
+		.default({ pollIntervalMs: 1000, autoFetchIntervalMs: 60000 }),
 });
 
 export type OrdnaConfig = z.infer<typeof configSchema>;

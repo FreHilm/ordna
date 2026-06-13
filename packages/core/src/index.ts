@@ -36,9 +36,11 @@ export {
 } from "./schema.js";
 export {
 	ARCHIVED_STATUS,
+	canFetch,
 	createContext,
 	createTask,
 	deleteTask,
+	fetchTasks,
 	getTask,
 	isKnownStatus,
 	listTasks,
@@ -47,6 +49,7 @@ export {
 	type ListTasksOptions,
 	type StoreContext,
 } from "./store.js";
+export type { FetchResult } from "./storage/backend.js";
 export { defaultSectionsFor, serializeTask } from "./writer.js";
 export { watchTasks, type TaskEvent, type TaskEventListener, type WatchOptions } from "./watcher.js";
 export {

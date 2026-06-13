@@ -80,4 +80,24 @@ export interface Backend {
 	 * "this backend doesn't support commit" error.
 	 */
 	commit?(message?: string): Promise<void>;
+
+	/**
+	 * Pull remote updates into the backend's storage. Only namespace
+	 * implements this in v1 — file mode has nothing to fetch, and
+	 * hybrid's task content rides regular `git pull` on branches while
+	 * its state ref auto-fetches on CAS conflict during writes. The
+	 * presence of this method is the UI capability check (web shows
+	 * the fetch button, TUI binds `r`) — consumers should detect via
+	 * `typeof ctx.backend.fetch === "function"`.
+	 *
+	 * Returns the number of refs that changed (added / updated /
+	 * removed by the fetch) and the wall-clock duration. Both surface
+	 * in the UI as a "fetched N refs in Xms" toast.
+	 */
+	fetch?(): Promise<FetchResult>;
+}
+
+export interface FetchResult {
+	refsUpdated: number;
+	durationMs: number;
 }

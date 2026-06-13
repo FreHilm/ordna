@@ -1,7 +1,15 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { WireTask, WsEvent } from "../shared/types.js";
 import { type RunWebHandle, runWeb } from "../server/start.js";
 
@@ -10,6 +18,14 @@ function setupRepo(): string {
 	mkdirSync(join(cwd, ".ordna"));
 	writeFileSync(join(cwd, ".ordna", "config.yaml"), "tasksDir: tasks\nschema: ordna\n", "utf8");
 	mkdirSync(join(cwd, "tasks"));
+	return cwd;
+}
+
+function setupGitRepoNoConfig(): string {
+	const cwd = mkdtempSync(join(tmpdir(), "ordna-web-setup-"));
+	spawnSync("git", ["init", "--initial-branch=main", "--quiet"], { cwd });
+	spawnSync("git", ["config", "user.email", "test@example.com"], { cwd });
+	spawnSync("git", ["config", "user.name", "Ordna Test"], { cwd });
 	return cwd;
 }
 
@@ -105,5 +121,152 @@ describe("web server", () => {
 
 		expect(events.length).toBeGreaterThan(0);
 		expect(["added", "changed"]).toContain(events[0]?.type);
+	});
+});
+
+describe("web server — in-place setup transition", () => {
+	const dirsToClean: string[] = [];
+	let handle: RunWebHandle | null = null;
+
+	afterEach(async () => {
+		if (handle) {
+			await handle.close();
+			handle = null;
+		}
+		for (const dir of dirsToClean) {
+			rmSync(dir, { recursive: true, force: true });
+		}
+		dirsToClean.length = 0;
+	});
+
+	it("starts in setup mode, transitions to ready in-place after POST /api/setup-mode", async () => {
+		const cwd = setupGitRepoNoConfig();
+		dirsToClean.push(cwd);
+
+		handle = await runWeb({ cwd, port: 0, host: "127.0.0.1", openBrowser: false });
+		const base = `http://127.0.0.1:${handle.port}`;
+
+		// Setup mode: ctx is null, GET / returns the setup page.
+		expect(handle.needsSetup).toBe(true);
+		expect(handle.context).toBeNull();
+		const setupRes = await fetch(`${base}/`);
+		expect(setupRes.status).toBe(200);
+		const setupHtml = await setupRes.text();
+		expect(setupHtml).toContain('action="/api/setup-mode"');
+		expect(setupHtml).toContain('value="file"');
+
+		// API surface is gated until config is written.
+		const gated = await fetch(`${base}/api/config`);
+		expect(gated.status).toBe(200);
+		const gatedBody = await gated.text();
+		expect(gatedBody).toContain('action="/api/setup-mode"');
+
+		// POST the choice — server writes config, builds ctx, returns a
+		// "loading the board" page with a meta-refresh.
+		const post = await fetch(`${base}/api/setup-mode`, {
+			method: "POST",
+			headers: { "Content-Type": "application/x-www-form-urlencoded" },
+			body: "storage=file",
+			redirect: "manual",
+		});
+		expect(post.status).toBe(200);
+		const postBody = await post.text();
+		expect(postBody).toContain('http-equiv="refresh"');
+		expect(postBody).toContain("Storage mode set to <code>file</code>");
+
+		// Config is now on disk.
+		const cfgPath = join(cwd, ".ordna", "config.yaml");
+		expect(existsSync(cfgPath)).toBe(true);
+		expect(readFileSync(cfgPath, "utf8")).toContain("storage: file");
+
+		// Handle reflects the transition; the API surface is live on the same port.
+		expect(handle.needsSetup).toBe(false);
+		expect(handle.context).not.toBeNull();
+		const cfg = await (await fetch(`${base}/api/config`)).json();
+		expect(cfg.statuses).toEqual(["todo", "doing", "done"]);
+
+		// A re-POST after transition is rejected.
+		const replay = await fetch(`${base}/api/setup-mode`, {
+			method: "POST",
+			headers: { "Content-Type": "application/x-www-form-urlencoded" },
+			body: "storage=hybrid",
+		});
+		expect(replay.status).toBe(400);
+	});
+
+	it("POST /api/setup-mode rejects an invalid storage value", async () => {
+		const cwd = setupGitRepoNoConfig();
+		dirsToClean.push(cwd);
+
+		handle = await runWeb({ cwd, port: 0, host: "127.0.0.1", openBrowser: false });
+		const base = `http://127.0.0.1:${handle.port}`;
+
+		const res = await fetch(`${base}/api/setup-mode`, {
+			method: "POST",
+			headers: { "Content-Type": "application/x-www-form-urlencoded" },
+			body: "storage=garbage",
+		});
+		expect(res.status).toBe(400);
+		expect(handle.needsSetup).toBe(true);
+		expect(existsSync(join(cwd, ".ordna", "config.yaml"))).toBe(false);
+	});
+});
+
+describe("web server — fetch capability", () => {
+	const dirsToClean: string[] = [];
+	let handle: RunWebHandle | null = null;
+
+	afterEach(async () => {
+		if (handle) {
+			await handle.close();
+			handle = null;
+		}
+		for (const dir of dirsToClean) {
+			rmSync(dir, { recursive: true, force: true });
+		}
+		dirsToClean.length = 0;
+	});
+
+	it("file mode: /api/config reports capabilities.fetch=false; POST /api/fetch → 501", async () => {
+		const cwd = setupRepo(); // file mode
+		dirsToClean.push(cwd);
+		handle = await runWeb({ cwd, port: 0, host: "127.0.0.1", openBrowser: false });
+		const base = `http://127.0.0.1:${handle.port}`;
+
+		const cfg = await (await fetch(`${base}/api/config`)).json();
+		expect(cfg.capabilities).toEqual({ fetch: false });
+
+		const res = await fetch(`${base}/api/fetch`, { method: "POST" });
+		expect(res.status).toBe(501);
+		const body = await res.json();
+		expect(String(body.error)).toMatch(/doesn't support fetch/);
+	});
+
+	it("namespace mode: /api/config reports capabilities.fetch=true; POST /api/fetch → 200", async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "ordna-web-ns-"));
+		dirsToClean.push(cwd);
+		spawnSync("git", ["init", "--initial-branch=main", "--quiet"], { cwd });
+		spawnSync("git", ["config", "user.email", "test@example.com"], { cwd });
+		spawnSync("git", ["config", "user.name", "Ordna Test"], { cwd });
+		mkdirSync(join(cwd, ".ordna"), { recursive: true });
+		writeFileSync(
+			join(cwd, ".ordna", "config.yaml"),
+			"storage: namespace\nschema: ordna\nnamespace:\n  autoFetchIntervalMs: 0\n",
+			"utf8",
+		);
+
+		handle = await runWeb({ cwd, port: 0, host: "127.0.0.1", openBrowser: false });
+		const base = `http://127.0.0.1:${handle.port}`;
+
+		const cfg = await (await fetch(`${base}/api/config`)).json();
+		expect(cfg.capabilities).toEqual({ fetch: true });
+
+		// No remote configured → fetch is a quiet no-op (refsUpdated: 0).
+		const res = await fetch(`${base}/api/fetch`, { method: "POST" });
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.ok).toBe(true);
+		expect(body.refsUpdated).toBe(0);
+		expect(typeof body.durationMs).toBe("number");
 	});
 });
