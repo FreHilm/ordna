@@ -1,6 +1,6 @@
 import { Box, Text, useInput } from "ink";
-import TextInput from "ink-text-input";
 import React, { useState } from "react";
+import { LineInput } from "./LineInput.js";
 import { theme } from "./theme.js";
 
 interface Props {
@@ -34,7 +34,7 @@ export function TextPrompt({
 				{label}
 			</Text>
 			<Box marginTop={1}>
-				<TextInput
+				<LineInput
 					value={value}
 					onChange={setValue}
 					onSubmit={(v) => {

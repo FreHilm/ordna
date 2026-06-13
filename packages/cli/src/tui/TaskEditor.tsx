@@ -8,8 +8,9 @@ import {
 	type StoreContext,
 } from "@frehilm/ordna-core";
 import { Box, Text, useInput } from "ink";
-import TextInput from "ink-text-input";
 import React, { useEffect, useMemo, useState } from "react";
+import { useRawBackspaceDelete } from "./hooks.js";
+import { LineInput } from "./LineInput.js";
 import { colorForStatus, tagColor, theme } from "./theme.js";
 
 interface Props {
@@ -211,6 +212,16 @@ export function TaskEditor({
 	const [error, setError] = useState<string | null>(null);
 	const [cursor, setCursor] = useState(0);
 	const [sectionScrollIdx, setSectionScrollIdx] = useState(0);
+	// When set, the editor is asking the user to confirm a discard / save /
+	// cancel choice instead of accepting field edits. Driven by the
+	// dirty-Esc flow at the bottom of the main useInput handler.
+	const [confirmExit, setConfirmExit] = useState(false);
+
+	const baseline = useMemo(() => toDraft(task), [task]);
+	const dirty = useMemo(
+		() => JSON.stringify(draft) !== JSON.stringify(baseline),
+		[draft, baseline],
+	);
 
 	const fields = useMemo(() => buildFields(draft), [draft]);
 	const focused = fields[focusIdx] ?? fields[0];
@@ -307,7 +318,56 @@ export function TaskEditor({
 		setCursor((c) => Math.max(0, Math.min(c, sec.content.length)));
 	}, [editing, focused, draft.sections]);
 
-	const save = async (): Promise<void> => {
+	// Raw-byte backspace/forward-delete for the section editor. Ink's
+	// parsed key object collapses both into `key.delete`, so we need
+	// the byte stream to do the right thing. Active only while a
+	// section is being edited; LineInput owns its own copy for the
+	// title/assignee/tags/depends_on text fields.
+	const sectionEditActive =
+		editing &&
+		focused?.kind === "section" &&
+		!confirmExit &&
+		!saving &&
+		draft.sections[focused.index] !== undefined;
+	const sectionIdx =
+		focused?.kind === "section" ? focused.index : -1;
+	useRawBackspaceDelete(
+		() => {
+			if (sectionIdx < 0) return;
+			const section = draft.sections[sectionIdx];
+			if (!section) return;
+			if (cursor === 0) return;
+			const next =
+				section.content.slice(0, cursor - 1) +
+				section.content.slice(cursor);
+			setDraft((d) => ({
+				...d,
+				sections: d.sections.map((s, i) =>
+					i === sectionIdx ? { ...s, content: next } : s,
+				),
+			}));
+			setCursor(cursor - 1);
+		},
+		() => {
+			if (sectionIdx < 0) return;
+			const section = draft.sections[sectionIdx];
+			if (!section) return;
+			if (cursor >= section.content.length) return;
+			const next =
+				section.content.slice(0, cursor) +
+				section.content.slice(cursor + 1);
+			setDraft((d) => ({
+				...d,
+				sections: d.sections.map((s, i) =>
+					i === sectionIdx ? { ...s, content: next } : s,
+				),
+			}));
+			// Cursor stays put.
+		},
+		sectionEditActive,
+	);
+
+	const save = async (): Promise<boolean> => {
 		setSaving(true);
 		setError(null);
 		try {
@@ -325,14 +385,37 @@ export function TaskEditor({
 				ctx,
 			);
 			onSaved(updated);
+			return true;
 		} catch (e) {
 			setError((e as Error).message);
 			setSaving(false);
+			return false;
 		}
 	};
 
 	useInput(async (input, key) => {
 		if (saving) return;
+
+		// Confirmation overlay intercepts everything else.
+		if (confirmExit) {
+			if (input === "s" || input === "S" || key.return) {
+				const ok = await save();
+				// On success the parent's onSaved closes the editor; on
+				// failure we drop the prompt so the user can see the
+				// error banner and decide what to do.
+				if (!ok) setConfirmExit(false);
+				return;
+			}
+			if (input === "d" || input === "D") {
+				onClose();
+				return;
+			}
+			if (input === "c" || input === "C" || key.escape) {
+				setConfirmExit(false);
+				return;
+			}
+			return;
+		}
 
 		if (key.ctrl && (input === "s" || input === "S")) {
 			await save();
@@ -448,18 +531,10 @@ export function TaskEditor({
 					writeContent(next, cursor + 1);
 					return;
 				}
-				if (key.backspace) {
-					if (cursor === 0) return;
-					const next = content.slice(0, cursor - 1) + content.slice(cursor);
-					writeContent(next, cursor - 1);
-					return;
-				}
-				if (key.delete) {
-					if (cursor >= content.length) return;
-					const next = content.slice(0, cursor) + content.slice(cursor + 1);
-					writeContent(next, cursor);
-					return;
-				}
+				// Backspace / forward-delete are handled by the raw-byte
+				// hook below — Ink can't tell them apart in the parsed key
+				// object. See `useRawBackspaceDelete` in hooks.ts.
+				if (key.backspace || key.delete) return;
 				if (input && !key.ctrl && !key.meta) {
 					const next = content.slice(0, cursor) + input + content.slice(cursor);
 					writeContent(next, cursor + input.length);
@@ -472,7 +547,11 @@ export function TaskEditor({
 
 		// Not editing: navigation + open editor
 		if (key.escape) {
-			onClose();
+			if (dirty) {
+				setConfirmExit(true);
+			} else {
+				onClose();
+			}
 			return;
 		}
 		if (key.tab && key.shift) {
@@ -543,7 +622,7 @@ export function TaskEditor({
 		const isEditing = isFocused && editing;
 		if (isEditing) {
 			return (
-				<TextInput
+				<LineInput
 					value={value}
 					onChange={onChange}
 					onSubmit={() => setEditing(false)}
@@ -586,7 +665,7 @@ export function TaskEditor({
 		const isEditing = isFocused && editing;
 		if (isEditing) {
 			return (
-				<TextInput
+				<LineInput
 					value={tokensToString(draft.tags)}
 					onChange={(v) => setDraft((d) => ({ ...d, tags: stringToTokens(v) }))}
 					onSubmit={() => setEditing(false)}
@@ -614,7 +693,7 @@ export function TaskEditor({
 		const isEditing = isFocused && editing;
 		if (isEditing) {
 			return (
-				<TextInput
+				<LineInput
 					value={tokensToString(draft.depends_on)}
 					onChange={(v) =>
 						setDraft((d) => ({ ...d, depends_on: stringToTokens(v) }))
@@ -702,6 +781,9 @@ export function TaskEditor({
 				{saving ? (
 					<Text color={theme.textMuted}>{"  · saving…"}</Text>
 				) : null}
+				{dirty && !confirmExit && !saving ? (
+					<Text color={theme.accent2}>{"  · unsaved"}</Text>
+				) : null}
 			</Box>
 
 			{error ? (
@@ -710,6 +792,48 @@ export function TaskEditor({
 				</Box>
 			) : null}
 
+			{confirmExit ? (
+				<Box flexDirection="column" marginTop={2} paddingX={2}>
+					<Text color={theme.accent2} bold>
+						Unsaved changes
+					</Text>
+					<Box marginTop={1}>
+						<Text color={theme.text}>
+							You've made changes to{" "}
+							<Text color={theme.accent} bold>
+								{task.id}
+							</Text>
+							. What would you like to do?
+						</Text>
+					</Box>
+					<Box marginTop={1} flexDirection="column">
+						<Text>
+							<Text color={theme.accent} bold>
+								{" S "}
+							</Text>
+							<Text color={theme.text}>save and close</Text>
+						</Text>
+						<Text>
+							<Text color={theme.accent} bold>
+								{" D "}
+							</Text>
+							<Text color={theme.text}>discard changes and close</Text>
+						</Text>
+						<Text>
+							<Text color={theme.accent} bold>
+								{" C "}
+							</Text>
+							<Text color={theme.text}>keep editing</Text>
+						</Text>
+					</Box>
+					<Box marginTop={2}>
+						<Text color={theme.textMuted} italic>
+							Enter saves · Esc cancels
+						</Text>
+					</Box>
+				</Box>
+			) : (
+			<>
 			<Box marginTop={1} flexDirection="column">
 				{renderRow(
 					"Title",
@@ -779,6 +903,8 @@ export function TaskEditor({
 						: "Tab field · Enter edit · Ctrl+S save · Esc cancel"}
 				</Text>
 			</Box>
+			</>
+			)}
 		</Box>
 	);
 }
