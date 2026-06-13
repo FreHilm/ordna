@@ -28,8 +28,15 @@ export interface Op {
 	ts: string;
 	/** Resolved from `git config user.email` with `ORDNA_ACTOR` env fallback, else `"unknown"`. */
 	actor: string;
-	op: "create" | "update" | "move" | "archive" | "delete";
+	op: "create" | "update" | "move" | "archive" | "delete" | "rename";
 	id: string;
+	/**
+	 * Present on `rename` ops only: the previous ID before namespace
+	 * auto-renumber resolved a push-collision. Powers the
+	 * "previously known as X" banner in the UIs. Existing parsers tolerate
+	 * the extra field — the JSON shape is forward-compatible.
+	 */
+	renamedFrom?: string;
 }
 
 const DEFAULT_REF = "refs/ordna/state";
@@ -72,6 +79,35 @@ export class SyncRef {
 	/** Drop the cache. Next `read()` hits the ref again. */
 	invalidate(): void {
 		this.#cached = null;
+	}
+
+	/**
+	 * Seed the ref with `initial` only if it doesn't yet exist. Used by
+	 * namespace mode to migrate pre-state-ref repos: scan existing
+	 * `refs/ordna/tasks/*` for the max id, then call this with
+	 * `{ next_id: max + 1, ops: [] }`. Safe to call concurrently — if
+	 * another process initialises first, we just adopt its value.
+	 */
+	async ensureInitialized(initial: SyncState): Promise<void> {
+		const fresh = await this.#readUncached();
+		if (fresh.oid !== null) {
+			// Already initialised by someone (us in a previous run, or
+			// another process racing with us). Adopt their state.
+			this.#cached = fresh;
+			return;
+		}
+		try {
+			await this.#writeCAS(null, initial);
+		} catch (err) {
+			if (isCASConflict(err)) {
+				// Lost the bootstrap race; another writer landed first.
+				// Re-read to pick up their state.
+				this.invalidate();
+				await this.read();
+				return;
+			}
+			throw err;
+		}
 	}
 
 	async #readUncached(): Promise<{ oid: string | null; state: SyncState }> {

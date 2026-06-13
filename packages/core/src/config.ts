@@ -22,13 +22,22 @@ export const configSchema = z.object({
 	// runs `git fetch origin '+refs/ordna/tasks/*:refs/ordna/tasks/*'`
 	// in the background so other machines' updates land without manual
 	// pulls; set to 0 to disable auto-fetch entirely (manual fetch via
-	// the TUI / web button still works).
+	// the TUI / web button still works). `autoRenumberOnConflict`
+	// controls whether a push-rejection on a colliding create silently
+	// reallocates a fresh ID for the local task (true, default) or
+	// surfaces a loud error (false, for projects where stable IDs in
+	// commit messages / external links are load-bearing).
 	namespace: z
 		.object({
 			pollIntervalMs: z.number().int().min(50).default(1000),
 			autoFetchIntervalMs: z.number().int().min(0).default(60000),
+			autoRenumberOnConflict: z.boolean().default(true),
 		})
-		.default({ pollIntervalMs: 1000, autoFetchIntervalMs: 60000 }),
+		.default({
+			pollIntervalMs: 1000,
+			autoFetchIntervalMs: 60000,
+			autoRenumberOnConflict: true,
+		}),
 });
 
 export type OrdnaConfig = z.infer<typeof configSchema>;

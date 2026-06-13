@@ -152,6 +152,14 @@ export function TaskDetail({
 				</Text>
 			</Box>
 
+			{task.renamed_from ? (
+				<Box>
+					<Text color={theme.textMuted} italic>
+						previously {task.renamed_from} — auto-renumbered on push collision
+					</Text>
+				</Box>
+			) : null}
+
 			<Box marginTop={1}>
 				<Text color={colorForStatus(task.status)}>{task.status}</Text>
 				<Text color={theme.textMuted}>{"  ·  "}</Text>

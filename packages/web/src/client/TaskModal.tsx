@@ -276,6 +276,15 @@ export function TaskModal({
 				<div className="modal-sub">
 					Created {task.created_at} · updated {task.updated_at}
 				</div>
+				{task.renamed_from ? (
+					<div className="modal-rename-banner">
+						Previously known as <code>{task.renamed_from}</code>
+						<span className="modal-rename-hint">
+							{" "}
+							— another writer landed this id first; Ordna auto-renumbered yours.
+						</span>
+					</div>
+				) : null}
 
 				{error ? (
 					<div style={{ padding: "0 24px 12px" }}>

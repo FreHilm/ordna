@@ -140,6 +140,17 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 		startTransition(() => {
 			if (event.type === "removed") {
 				setTasks((prev) => removeTaskByPath(prev, event.filePath));
+			} else if (event.type === "renamed") {
+				// Drop the entry under the old id (if it's still there)
+				// and re-insert the renamed task under its new id. A toast
+				// nudges the user about the auto-renumber.
+				setTasks((prev) => {
+					const withoutOld = prev.filter((t) => t.id !== event.oldId);
+					return mergeTask(withoutOld, event.task);
+				});
+				const msg = `Renamed ${event.oldId} → ${event.newId}`;
+				setToast(msg);
+				setTimeout(() => setToast((t) => (t === msg ? null : t)), 2500);
 			} else {
 				setTasks((prev) => mergeTask(prev, event.task));
 			}

@@ -38,6 +38,14 @@ export interface Task {
 	 */
 	filePath?: string;
 	rawContent: string;
+	/**
+	 * Most recent previous id this task had, if the namespace backend
+	 * auto-renumbered it on a push collision. Surfaced as a
+	 * "previously known as X" banner in the UIs. Populated only by the
+	 * namespace backend (it reads the state ref's audit log on each
+	 * `get`/`list`); file and hybrid leave it `undefined`.
+	 */
+	renamed_from?: string;
 }
 
 export interface TaskCreateInput {

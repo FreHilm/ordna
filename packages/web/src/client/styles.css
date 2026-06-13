@@ -860,6 +860,26 @@ select {
 	font-size: 13.5px;
 }
 
+.modal-rename-banner {
+	margin: 0 24px 16px;
+	padding: 8px 12px;
+	border-radius: 6px;
+	background: color-mix(in srgb, var(--accent, #2563eb) 12%, transparent);
+	border: 1px solid color-mix(in srgb, var(--accent, #2563eb) 30%, transparent);
+	color: var(--text-1);
+	font-size: 13px;
+	line-height: 1.5;
+}
+.modal-rename-banner code {
+	background: rgba(0, 0, 0, 0.18);
+	padding: 1px 6px;
+	border-radius: 3px;
+	font-size: 12.5px;
+}
+.modal-rename-hint {
+	color: var(--text-3);
+}
+
 .modal-grid {
 	display: grid;
 	grid-template-columns: 1fr 240px;

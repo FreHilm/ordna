@@ -80,10 +80,27 @@ export function App(): JSX.Element {
 			const evt = JSON.parse(event.data) as WsEvent;
 			setTasks((prev) => {
 				if (evt.type === "removed") return prev.filter((t) => t.id !== evt.id);
+				if (evt.type === "renamed") {
+					// Drop the old-id entry and re-insert under newId.
+					const next = prev.filter(
+						(t) => t.id !== evt.oldId && t.id !== evt.newId,
+					);
+					next.push(evt.task);
+					return next;
+				}
 				const next = prev.filter((t) => t.id !== evt.task.id);
 				next.push(evt.task);
 				return next;
 			});
+			if (evt.type === "renamed") {
+				// If the user has the renamed task open, swap to its new id so
+				// the modal stays on the same content.
+				setOpenTaskId((cur) => (cur === evt.oldId ? evt.newId : cur));
+				setActiveId((cur) => (cur === evt.oldId ? evt.newId : cur));
+				const msg = `Renamed ${evt.oldId} → ${evt.newId}`;
+				setToast({ message: msg, kind: "info" });
+				window.setTimeout(() => setToast(null), 3500);
+			}
 		};
 		return () => ws.close();
 	}, []);

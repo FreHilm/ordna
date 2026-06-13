@@ -27,7 +27,8 @@ export type WireTask = Omit<Task, "rawContent">;
 export type WsEvent =
 	| { type: "added"; task: WireTask }
 	| { type: "changed"; task: WireTask }
-	| { type: "removed"; id: string };
+	| { type: "removed"; id: string }
+	| { type: "renamed"; oldId: string; newId: string; task: WireTask };
 
 export function toWireTask(task: Task): WireTask {
 	const { rawContent: _rawContent, ...rest } = task;

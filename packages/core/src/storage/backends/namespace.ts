@@ -1,5 +1,5 @@
 import type { OrdnaConfig } from "../../config.js";
-import { formatId, parseId } from "../../ids.js";
+import { parseId } from "../../ids.js";
 import type {
 	Task,
 	TaskCreateInput,
@@ -14,19 +14,29 @@ import {
 	isKnownStatus,
 } from "../backend.js";
 import { GitRunner } from "../git-ref.js";
-import { PushQueue } from "../auto-push.js";
 import {
 	defaultSectionsFor,
 	parseTaskBytes,
 	serializeTask,
 } from "../markdown.js";
+import { type Op, SyncRef } from "../sync-ref.js";
 
 const REF_PREFIX = "refs/ordna/tasks/";
 const TASK_REF_PATTERN = `${REF_PREFIX}*`;
-const NAMESPACE_PUSH_REFSPEC = `+${REF_PREFIX}*:${REF_PREFIX}*`;
+const NAMESPACE_FETCH_REFSPEC = `+${REF_PREFIX}*:${REF_PREFIX}*`;
+const STATE_REF_NAME = "refs/ordna/state";
+const STATE_PUSH_REFSPEC = `+${STATE_REF_NAME}:${STATE_REF_NAME}`;
+const STATE_FETCH_REFSPEC = `+${STATE_REF_NAME}:${STATE_REF_NAME}`;
+const PUSH_DEBOUNCE_MS = 50;
+// Sentinel refname used internally to schedule the state ref push.
+const STATE_PUSH_SENTINEL = STATE_REF_NAME;
 
 function today(): string {
 	return new Date().toISOString().slice(0, 10);
+}
+
+function nowIso(): string {
+	return new Date().toISOString();
 }
 
 function refnameFor(id: string): string {
@@ -39,11 +49,6 @@ function idFromRefname(refname: string): string | null {
 	return id.length > 0 ? id : null;
 }
 
-/**
- * Heuristic: detect git CAS conflicts from `update-ref` failures so we
- * can wrap them in a clearer "ref moved underneath" message. Same
- * pattern as SyncRef but standalone — namespace doesn't auto-retry.
- */
 function isCASConflict(err: unknown): boolean {
 	if (!(err instanceof Error)) return false;
 	const msg = err.message.toLowerCase();
@@ -57,42 +62,103 @@ function isCASConflict(err: unknown): boolean {
 }
 
 /**
+ * Heuristic: detect a push rejection from the thrown git error. Covers
+ * the three flavours we care about:
+ *  - `[rejected] ... (stale info)` — `--force-with-lease` denied
+ *  - `[rejected] ... (non-fast-forward)` — plain refused update
+ *  - `[rejected] ... (fetch first)` — same family
+ *
+ * Network failures and auth errors fall through to the generic logger.
+ */
+function isPushRejection(err: unknown): boolean {
+	if (!(err instanceof Error)) return false;
+	const msg = err.message.toLowerCase();
+	return (
+		msg.includes("rejected") ||
+		msg.includes("stale info") ||
+		msg.includes("non-fast-forward") ||
+		msg.includes("fetch first")
+	);
+}
+
+interface PendingPush {
+	refname: string;
+	/** Local OID we want pushed. Empty string for state-ref sentinel. */
+	newOid: string;
+	/**
+	 * The OID the remote should currently hold for the lease to pass.
+	 * Empty string asserts the ref must not yet exist on the remote.
+	 */
+	expectedOld: string;
+	/**
+	 * True if this push asserts the ref doesn't exist remotely (the
+	 * create case). Only creates can be auto-renumbered on collision.
+	 */
+	isCreate: boolean;
+}
+
+/**
  * Namespace storage backend.
  *
- * Tasks live as git blobs under `refs/ordna/tasks/<id>` — one ref per
- * task, no working-tree files. `git status` stays clean. `git log` on
- * branches doesn't see task mutations. Sync via `git push` /
- * `git fetch` on the ref namespace.
+ * Tasks live as git **blobs** under `refs/ordna/tasks/<id>` — one ref
+ * per task, no working-tree files. `git status` stays clean. `git log`
+ * on branches doesn't see task mutations.
  *
- * Differences from hybrid mode:
- * - Tasks are git blobs, not files. `tasks/` is never created.
- * - Allocator scans existing task refs (no SyncRef — audit log is
- *   deferred; can be added later by reusing T-031's SyncRef with only
- *   the `ops` field populated).
- * - Watcher polls `git for-each-ref` (refs have no kernel-level
- *   change-notification path).
- * - `commit()` is a deliberate no-op — auto-push handles sync; there
- *   are no working-tree changes to stage.
- * - CAS update-conflicts are surfaced to the user (no fetch-and-retry
- *   like SyncRef does). Two writers racing on the same task ref is
- *   meaningful — auto-retry would mask intentional concurrent edits.
+ * **ID allocation.** A shared `refs/ordna/state` ref carries a
+ * `SyncRef`-managed JSON blob `{next_id, ops}`. Same primitive as
+ * hybrid: CAS in-process, auto-fetch-and-retry on conflict.
+ *
+ * **Bootstrap.** On `init()` if the state ref is missing, we scan
+ * existing `refs/ordna/tasks/*` and seed `next_id` from the max
+ * numeric id. Safe across concurrent processes (CAS).
+ *
+ * **Sync.** Every mutation schedules a per-ref push with
+ * `--force-with-lease` (per-ref CAS at the protocol level). On a
+ * rejected `create` (offline collision), the backend fetches,
+ * reallocates a fresh id via `SyncRef`, rewrites the local blob's
+ * `id:` field, cascades the rewrite through any local `depends_on`
+ * references to the old id, and emits a `renamed` event. Update
+ * collisions are deliberately loud — silently picking a winner would
+ * lose user edits.
+ *
+ * **Auto-fetch.** A configurable timer (default 60s) keeps the local
+ * snapshot fresh without manual pulls. A `fetch()` method exposes it
+ * manually for the TUI key / web button.
+ *
+ * **Audit log.** The `ops` array in the state blob records every
+ * `create`/`update`/`archive`/`delete`/`rename`. `rename` entries
+ * carry `renamedFrom` so the UIs can show a "previously known as X"
+ * banner on the affected task.
  */
 export class NamespaceBackend implements Backend {
 	readonly kind = "namespace";
 
 	#initPromise: Promise<void> | null = null;
 	readonly #git: GitRunner;
-	#pushQueue: PushQueue | null = null;
+	#sync: SyncRef | null = null;
+	#cachedActor: string | null = null;
+
+	// Push pipeline (replaces the simple PushQueue used in earlier T-032).
+	#pendingPushes = new Map<string, PendingPush>();
+	#pushTimer: ReturnType<typeof setTimeout> | null = null;
+	#pushInFlight: Promise<void> | null = null;
+	#pushRetryPending = false;
+
+	// Watcher (poll-based, refs have no kernel-level change notification).
 	#pollTimer: ReturnType<typeof setTimeout> | null = null;
 	#listeners = new Set<TaskEventListener>();
-	#lastSnapshot = new Map<string, string>(); // refname → oid
+	#lastSnapshot = new Map<string, string>();
 	#pollIntervalMs: number;
+
+	// Auto-fetch (60s by default; 0 disables).
 	#autoFetchIntervalMs: number;
 	#autoFetchTimer: ReturnType<typeof setTimeout> | null = null;
 	#autoFetchInFlight: Promise<FetchResult> | null = null;
+
 	#remoteChecked = false;
 	#remoteExists = false;
 	#disposed = false;
+	#autoRenumberOnConflict: boolean;
 
 	constructor(
 		private readonly cwd: string,
@@ -101,18 +167,39 @@ export class NamespaceBackend implements Backend {
 		this.#git = new GitRunner(cwd);
 		this.#pollIntervalMs = config.namespace?.pollIntervalMs ?? 1000;
 		this.#autoFetchIntervalMs = config.namespace?.autoFetchIntervalMs ?? 60000;
+		this.#autoRenumberOnConflict =
+			config.namespace?.autoRenumberOnConflict ?? true;
 	}
 
 	async init(): Promise<void> {
 		await this.#git.ensureRepository();
-		this.#pushQueue = new PushQueue(
-			this.#git,
-			NAMESPACE_PUSH_REFSPEC,
-			"ordna-namespace",
-		);
+		this.#sync = new SyncRef(this.#git, STATE_REF_NAME);
+		await this.#bootstrapStateIfMissing();
 		if (this.#autoFetchIntervalMs > 0) {
 			this.#scheduleAutoFetch();
 		}
+	}
+
+	async #bootstrapStateIfMissing(): Promise<void> {
+		const sync = this.#sync as SyncRef;
+		// Compute the high-water mark from existing task refs so an upgrade
+		// from a pre-state-ref namespace install (or a fresh clone before
+		// the state ref was pushed) gets the correct next_id.
+		const refs = await this.#git.forEachRef(TASK_REF_PATTERN);
+		let maxNumeric = 0;
+		for (const { refname } of refs) {
+			const id = idFromRefname(refname);
+			if (!id) continue;
+			const n = parseId(this.config, id);
+			if (n !== null && n > maxNumeric) maxNumeric = n;
+		}
+		// ensureInitialized only writes if the state ref doesn't yet exist
+		// (CAS with empty expected). If two processes race, one wins and
+		// the other adopts.
+		await sync.ensureInitialized({
+			next_id: maxNumeric + 1,
+			ops: [],
+		});
 	}
 
 	async #ensureInit(): Promise<void> {
@@ -130,9 +217,6 @@ export class NamespaceBackend implements Backend {
 			clearTimeout(this.#autoFetchTimer);
 			this.#autoFetchTimer = null;
 		}
-		// Let any in-flight auto-fetch finish so its results are
-		// applied / errors logged before we tear down. Manual fetch()
-		// is awaited by the caller directly so it can't outlive dispose.
 		if (this.#autoFetchInFlight) {
 			try {
 				await this.#autoFetchInFlight;
@@ -140,11 +224,13 @@ export class NamespaceBackend implements Backend {
 				// already logged in #runAutoFetch
 			}
 		}
+		// Flush any pending pushes so the last mutation lands on origin
+		// before the process exits. flushPushes cancels the debounce
+		// timer itself; we leave #pushTimer alone here so it can hand
+		// the pending batch to the flusher.
+		await this.#flushPushes();
 		this.#listeners.clear();
 		this.#lastSnapshot.clear();
-		if (this.#pushQueue) {
-			await this.#pushQueue.flush();
-		}
 	}
 
 	// ---------------- reads ----------------
@@ -152,6 +238,7 @@ export class NamespaceBackend implements Backend {
 	async list(options: ListOptions = {}): Promise<Task[]> {
 		await this.#ensureInit();
 		const refs = await this.#git.forEachRef(TASK_REF_PATTERN);
+		const renamedMap = await this.#buildRenamedFromMap();
 		const tasks: Task[] = [];
 		for (const { refname, oid } of refs) {
 			const id = idFromRefname(refname);
@@ -163,9 +250,11 @@ export class NamespaceBackend implements Backend {
 				// `ref:` value — strip so consumers see undefined and
 				// take the "no on-disk file" branch.
 				delete task.filePath;
+				const renamedFrom = renamedMap.get(id);
+				if (renamedFrom) task.renamed_from = renamedFrom;
 				tasks.push(task);
 			} catch {
-				// Skip unreadable / malformed blobs silently (same posture as file mode).
+				// Skip unreadable / malformed blobs silently.
 			}
 		}
 
@@ -194,6 +283,8 @@ export class NamespaceBackend implements Backend {
 			const raw = await this.#git.catBlob(entry.oid);
 			const task = parseTaskBytes(raw, `ref:${refname}`);
 			delete task.filePath;
+			const renamedFrom = await this.#lookupRenamedFrom(id);
+			if (renamedFrom) task.renamed_from = renamedFrom;
 			return task;
 		} catch {
 			return null;
@@ -204,7 +295,7 @@ export class NamespaceBackend implements Backend {
 
 	async create(input: TaskCreateInput): Promise<Task> {
 		await this.#ensureInit();
-		const pushQueue = this.#pushQueue as PushQueue;
+		const sync = this.#sync as SyncRef;
 
 		const status = input.status ?? this.config.statuses[0];
 		if (!status) throw new Error("Config has no statuses defined.");
@@ -212,7 +303,10 @@ export class NamespaceBackend implements Backend {
 			throw new Error(`Status "${status}" is not in configured statuses.`);
 		}
 
-		const id = await this.#allocateNextId();
+		// Allocate via SyncRef — CAS-retries on conflict, auto-fetches the
+		// state ref from origin before retry.
+		const id = await sync.allocateNextId(this.config);
+
 		const now = today();
 		const task: Task = {
 			id,
@@ -231,26 +325,40 @@ export class NamespaceBackend implements Backend {
 		const serialized = serializeTask(task, this.config.schema);
 		task.rawContent = serialized;
 
+		// hash-object first — blob is durable in .git/objects/ from here;
+		// any subsequent failure leaves an orphan, recoverable until the
+		// next `git gc --prune`.
 		const newOid = await this.#git.hashObject(serialized);
-		// CAS: empty-string expected-old means "must not exist." Defends
-		// against two offline machines both writing T-001.
+
+		// CAS update-ref with empty expected-old. Belt-and-braces: SyncRef
+		// just handed us a fresh id, so a local collision means the state
+		// ref is out of sync with reality. We surface that loudly rather
+		// than silently mask it.
 		try {
 			await this.#git.updateRef(refnameFor(id), newOid, "");
 		} catch (err) {
 			if (isCASConflict(err)) {
 				throw new Error(
-					`ordna: ${id} already exists at ${refnameFor(id)}. Another writer landed this ID first; pull and retry.`,
+					`ordna: ${id} already exists locally despite a fresh allocation. State ref may be out of sync — try \`git update-ref -d ${STATE_REF_NAME}\` and retry; the next init() will reseed from existing task refs.`,
 				);
 			}
 			throw err;
 		}
-		pushQueue.schedule();
+
+		await sync.appendOp(await this.#buildOp("create", id));
+		this.#schedulePush({
+			refname: refnameFor(id),
+			newOid,
+			expectedOld: "",
+			isCreate: true,
+		});
+		this.#schedulePushState();
 		return task;
 	}
 
 	async update(id: string, patch: TaskUpdateInput): Promise<Task> {
 		await this.#ensureInit();
-		const pushQueue = this.#pushQueue as PushQueue;
+		const sync = this.#sync as SyncRef;
 
 		const refname = refnameFor(id);
 		const refs = await this.#git.forEachRef(refname);
@@ -295,20 +403,33 @@ export class NamespaceBackend implements Backend {
 			}
 			throw err;
 		}
-		pushQueue.schedule();
+
+		// Light op classification: archive transitions get their own kind;
+		// everything else is a generic update. Mirrors hybrid.
+		const opKind: Op["op"] =
+			patch.status === ARCHIVED_STATUS ? "archive" : "update";
+		await sync.appendOp(await this.#buildOp(opKind, id));
+		this.#schedulePush({
+			refname,
+			newOid,
+			expectedOld: currentOid,
+			isCreate: false,
+		});
+		this.#schedulePushState();
 		return next;
 	}
 
 	async delete(id: string): Promise<void> {
 		await this.#ensureInit();
-		const pushQueue = this.#pushQueue as PushQueue;
+		const sync = this.#sync as SyncRef;
 
 		const refname = refnameFor(id);
 		const refs = await this.#git.forEachRef(refname);
 		const entry = refs.find((r) => r.refname === refname);
 		if (!entry) throw new Error(`Task ${id} not found.`);
+		const oldOid = entry.oid;
 		try {
-			await this.#git.deleteRef(refname, entry.oid);
+			await this.#git.deleteRef(refname, oldOid);
 		} catch (err) {
 			if (isCASConflict(err)) {
 				throw new Error(
@@ -317,7 +438,30 @@ export class NamespaceBackend implements Backend {
 			}
 			throw err;
 		}
-		pushQueue.schedule();
+
+		await sync.appendOp(await this.#buildOp("delete", id));
+
+		// Delete-push with lease so we don't clobber an in-flight remote
+		// update. Soft-fail like the other push paths — the local delete
+		// has already happened; a rejection just means the remote has
+		// diverged and the user needs to reconcile.
+		await this.#checkRemote();
+		if (this.#remoteExists) {
+			try {
+				await this.#git.run([
+					"push",
+					`--force-with-lease=${refname}:${oldOid}`,
+					"origin",
+					`:${refname}`,
+				]);
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : String(err);
+				console.error(
+					`[ordna-namespace] delete-push for ${refname} failed: ${msg}`,
+				);
+			}
+		}
+		this.#schedulePushState();
 	}
 
 	// ---------------- watch ----------------
@@ -361,30 +505,368 @@ export class NamespaceBackend implements Backend {
 		await this.#checkRemote();
 		if (!this.#remoteExists) return { refsUpdated: 0, durationMs: 0 };
 
-		// Snapshot before/after so we can report how many refs the fetch
-		// actually changed. The watcher's poll loop will pick the same
-		// diffs up on its next tick and emit task events — we don't
-		// emit directly from here.
 		const before = await this.#snapshotRefs();
-		await this.#git.fetchRefspec(NAMESPACE_PUSH_REFSPEC);
+		// Fetch task refs and the state ref. State ref may not yet exist
+		// on origin (mixed-version teams); ignore that failure.
+		await this.#git.fetchRefspec(NAMESPACE_FETCH_REFSPEC);
+		try {
+			await this.#git.fetchRefspec(STATE_FETCH_REFSPEC);
+		} catch {
+			// remote doesn't have the state ref yet — fine
+		}
+		if (this.#sync) this.#sync.invalidate();
 		const after = await this.#snapshotRefs();
 		const changed = this.#countRefDiff(before, after);
 		return { refsUpdated: changed, durationMs: Date.now() - start };
 	}
 
-	// ---------------- internals ----------------
+	// ---------------- internals: push pipeline ----------------
 
-	async #allocateNextId(): Promise<string> {
-		const refs = await this.#git.forEachRef(TASK_REF_PATTERN);
-		let max = 0;
-		for (const { refname } of refs) {
-			const id = idFromRefname(refname);
-			if (!id) continue;
-			const n = parseId(this.config, id);
-			if (n !== null && n > max) max = n;
+	#schedulePush(push: PendingPush): void {
+		// Coalesce per refname: keep the original expectedOld (the value
+		// the remote has when we first scheduled), update newOid to the
+		// latest. isCreate stays as captured on first schedule — if a
+		// create+update happen back-to-back without a flush, the remote
+		// still sees "this ref didn't exist; now it does."
+		const existing = this.#pendingPushes.get(push.refname);
+		if (existing && existing.refname !== STATE_PUSH_SENTINEL) {
+			existing.newOid = push.newOid;
+		} else {
+			this.#pendingPushes.set(push.refname, { ...push });
 		}
-		return formatId(this.config, max + 1);
+		this.#armPushTimer();
 	}
+
+	#schedulePushState(): void {
+		this.#pendingPushes.set(STATE_PUSH_SENTINEL, {
+			refname: STATE_PUSH_SENTINEL,
+			newOid: "",
+			expectedOld: "",
+			isCreate: false,
+		});
+		this.#armPushTimer();
+	}
+
+	#armPushTimer(): void {
+		if (this.#pushTimer) clearTimeout(this.#pushTimer);
+		const t = setTimeout(() => {
+			this.#pushTimer = null;
+			void this.#drainPushes();
+		}, PUSH_DEBOUNCE_MS);
+		// Don't keep the Node process alive on the push timer alone —
+		// host owns lifetime, dispose() flushes anything pending.
+		(t as unknown as { unref?: () => void }).unref?.();
+		this.#pushTimer = t;
+	}
+
+	async #drainPushes(): Promise<void> {
+		if (this.#pushInFlight) {
+			this.#pushRetryPending = true;
+			return;
+		}
+		this.#pushInFlight = this.#runPushBatch().finally(() => {
+			this.#pushInFlight = null;
+			if (this.#pushRetryPending) {
+				this.#pushRetryPending = false;
+				void this.#drainPushes();
+			}
+		});
+	}
+
+	async #runPushBatch(): Promise<void> {
+		await this.#checkRemote();
+		if (!this.#remoteExists) {
+			this.#pendingPushes.clear();
+			return;
+		}
+
+		// Take the current batch; new schedules accumulate into the next.
+		const batch = Array.from(this.#pendingPushes.values());
+		this.#pendingPushes.clear();
+
+		// State ref push first — best-effort, force is fine since SyncRef
+		// has CAS-managed the ref in-process already.
+		const stateInBatch = batch.find((p) => p.refname === STATE_PUSH_SENTINEL);
+		if (stateInBatch) {
+			try {
+				await this.#git.pushRef(STATE_PUSH_REFSPEC);
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : String(err);
+				console.error(`[ordna-namespace] state push failed: ${msg}`);
+			}
+		}
+
+		// Task ref pushes with per-ref leases. We don't bail on first
+		// rejection — each ref is reconciled independently so a single
+		// collision doesn't block the rest.
+		for (const push of batch) {
+			if (push.refname === STATE_PUSH_SENTINEL) continue;
+			await this.#pushTaskRef(push);
+		}
+	}
+
+	async #pushTaskRef(push: PendingPush): Promise<void> {
+		try {
+			await this.#git.pushRefWithLease(
+				push.refname,
+				push.newOid,
+				push.expectedOld,
+			);
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			if (!isPushRejection(err)) {
+				console.error(
+					`[ordna-namespace] push failed for ${push.refname}: ${msg}`,
+				);
+				return;
+			}
+			if (push.isCreate && this.#autoRenumberOnConflict) {
+				await this.#reconcileCreateCollision(push);
+			} else {
+				// Update collision (or auto-renumber disabled). Loud.
+				console.error(
+					`[ordna-namespace] push rejected for ${push.refname}; remote has diverged. Run \`git fetch origin '+${push.refname}:${push.refname}'\` and reconcile manually.`,
+				);
+			}
+		}
+	}
+
+	/**
+	 * Push of a `create` was rejected because the remote already has
+	 * this id (another offline writer landed it first). Recover by:
+	 *
+	 *   1. Fetching origin (so our local refs reflect the remote winner).
+	 *   2. Reading the blob we tried to push (we still have the OID).
+	 *   3. Allocating a fresh id via SyncRef.
+	 *   4. Re-serialising with the new id, writing a new ref.
+	 *   5. Cascading the rewrite through any local `depends_on`
+	 *      references to the old id.
+	 *   6. Logging a `rename` op (with `renamedFrom`) in the audit log.
+	 *   7. Scheduling the new refs for push.
+	 *   8. Emitting a `renamed` event so the UI can toast + show the
+	 *      "previously known as X" banner.
+	 */
+	async #reconcileCreateCollision(push: PendingPush): Promise<void> {
+		const sync = this.#sync as SyncRef;
+		const oldId = idFromRefname(push.refname);
+		if (!oldId) return;
+
+		try {
+			// 1. Fetch — our local copy of `push.refname` will be clobbered
+			//    by the remote's value (that's fine; we abandon the local
+			//    write of that ref and recreate under a new id).
+			await this.#git.fetchRefspec(NAMESPACE_FETCH_REFSPEC);
+			try {
+				await this.#git.fetchRefspec(STATE_FETCH_REFSPEC);
+			} catch {
+				// state ref may not exist on origin yet
+			}
+			sync.invalidate();
+
+			// 2. Read the blob we wanted to push. push.newOid is the OID
+			//    we hashed locally; the blob still exists in .git/objects/
+			//    even though the ref no longer points at it.
+			const ourBlob = await this.#git.catBlob(push.newOid);
+			const ourTask = parseTaskBytes(ourBlob, `ref:${push.refname}`);
+			delete ourTask.filePath;
+
+			// 3. Allocate a fresh id. After the fetch, the SyncRef cache
+			//    has been invalidated and a new read reflects the merged
+			//    remote+local view of `next_id`. The allocator may still
+			//    hand us an id that's taken by a *different* local task
+			//    (e.g. A had T-001 + T-002 local, T-001 collided, state
+			//    says next_id=2 but T-002 is locally occupied). Loop until
+			//    we get a genuinely free slot — burning ids is fine, they
+			//    are cheap.
+			let newId = await sync.allocateNextId(this.config);
+			for (let attempt = 0; attempt < 100; attempt++) {
+				const existing = await this.#git.forEachRef(refnameFor(newId));
+				if (existing.find((r) => r.refname === refnameFor(newId)) === undefined) {
+					break;
+				}
+				newId = await sync.allocateNextId(this.config);
+			}
+
+			// 4. Re-serialise with the new id.
+			const renamed: Task = {
+				...ourTask,
+				id: newId,
+				updated_at: today(),
+			};
+			const renamedSerialized = serializeTask(renamed, this.config.schema);
+			renamed.rawContent = renamedSerialized;
+			const renamedOid = await this.#git.hashObject(renamedSerialized);
+			await this.#git.updateRef(refnameFor(newId), renamedOid, "");
+
+			// 5. Cascade. Any local task whose depends_on referenced oldId
+			//    gets rewritten to newId. Naive sweep — accepts rare false
+			//    positives where a remote teammate's task coincidentally
+			//    depended on the colliding id (their content is untouched
+			//    locally, so the cascade only catches genuinely-local edits).
+			await this.#cascadeDependsOnRewrite(oldId, newId);
+
+			// 6. Audit log.
+			await sync.appendOp({
+				ts: nowIso(),
+				actor: await this.#resolveActor(),
+				op: "rename",
+				id: newId,
+				renamedFrom: oldId,
+			});
+
+			// 7. Schedule pushes.
+			this.#schedulePush({
+				refname: refnameFor(newId),
+				newOid: renamedOid,
+				expectedOld: "",
+				isCreate: true,
+			});
+			this.#schedulePushState();
+
+			// 8. Notify watchers.
+			this.#emit({ type: "renamed", oldId, newId, task: renamed });
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			console.error(
+				`[ordna-namespace] reconcile failed for ${push.refname}: ${msg}`,
+			);
+		}
+	}
+
+	async #cascadeDependsOnRewrite(
+		oldId: string,
+		newId: string,
+	): Promise<void> {
+		const refs = await this.#git.forEachRef(TASK_REF_PATTERN);
+		for (const { refname, oid } of refs) {
+			const id = idFromRefname(refname);
+			if (!id || id === newId) continue;
+			try {
+				const raw = await this.#git.catBlob(oid);
+				const task = parseTaskBytes(raw, `ref:${refname}`);
+				delete task.filePath;
+				if (!task.depends_on.includes(oldId)) continue;
+				const next: Task = {
+					...task,
+					depends_on: task.depends_on.map((d) =>
+						d === oldId ? newId : d,
+					),
+					updated_at: today(),
+				};
+				const serialized = serializeTask(next, this.config.schema);
+				next.rawContent = serialized;
+				const newOid = await this.#git.hashObject(serialized);
+				try {
+					await this.#git.updateRef(refname, newOid, oid);
+				} catch {
+					// Ref moved underneath the cascade. Skip — the next
+					// pass (e.g. on the next mutation) will pick it up
+					// if needed; we don't loop here to avoid contention.
+					continue;
+				}
+				this.#schedulePush({
+					refname,
+					newOid,
+					expectedOld: oid,
+					isCreate: false,
+				});
+				this.#emit({ type: "changed", task: next });
+			} catch {
+				// skip unreadable tasks
+			}
+		}
+	}
+
+	async #flushPushes(): Promise<void> {
+		// Cancel the debounce timer so we don't accidentally fire a
+		// duplicate drain alongside ours.
+		if (this.#pushTimer) {
+			clearTimeout(this.#pushTimer);
+			this.#pushTimer = null;
+		}
+		// Kick off a drain now if there's anything queued and nothing
+		// already running. Otherwise the in-flight drain (or the empty
+		// state) handles it.
+		if (this.#pendingPushes.size > 0 && !this.#pushInFlight) {
+			void this.#drainPushes();
+		}
+		// Wait until the pipeline is fully quiet — drains may chain via
+		// the retry-pending flag (e.g. a reconcile schedules a new push
+		// while the previous batch is running).
+		while (this.#pushInFlight) {
+			await this.#pushInFlight;
+		}
+	}
+
+	// ---------------- internals: rename history ----------------
+
+	/**
+	 * Walk the audit log in reverse and return a map of `currentId →
+	 * mostRecentPreviousId` for every renamed task. Cheap because the
+	 * state blob is cached in SyncRef; we re-walk only when the cache
+	 * has been invalidated (by a fetch or a CAS conflict).
+	 */
+	async #buildRenamedFromMap(): Promise<Map<string, string>> {
+		const map = new Map<string, string>();
+		if (!this.#sync) return map;
+		try {
+			const state = await this.#sync.read();
+			// Walk in reverse so the first hit per id is the most recent.
+			for (let i = state.ops.length - 1; i >= 0; i--) {
+				const op = state.ops[i];
+				if (!op || op.op !== "rename" || !op.renamedFrom) continue;
+				if (map.has(op.id)) continue;
+				map.set(op.id, op.renamedFrom);
+			}
+		} catch {
+			// State blob unreadable — return empty map; banner just doesn't show.
+		}
+		return map;
+	}
+
+	async #lookupRenamedFrom(id: string): Promise<string | null> {
+		if (!this.#sync) return null;
+		try {
+			const state = await this.#sync.read();
+			for (let i = state.ops.length - 1; i >= 0; i--) {
+				const op = state.ops[i];
+				if (!op || op.op !== "rename" || op.id !== id) continue;
+				return op.renamedFrom ?? null;
+			}
+		} catch {
+			// fall through
+		}
+		return null;
+	}
+
+	// ---------------- internals: actor / audit op builder ----------------
+
+	async #buildOp(op: Op["op"], id: string): Promise<Op> {
+		return {
+			ts: nowIso(),
+			actor: await this.#resolveActor(),
+			op,
+			id,
+		};
+	}
+
+	async #resolveActor(): Promise<string> {
+		if (this.#cachedActor !== null) return this.#cachedActor;
+		const fromGit = await this.#git.userEmail();
+		if (fromGit) {
+			this.#cachedActor = fromGit;
+			return fromGit;
+		}
+		const fromEnv = process.env.ORDNA_ACTOR;
+		if (fromEnv && fromEnv.trim().length > 0) {
+			this.#cachedActor = fromEnv.trim();
+			return this.#cachedActor;
+		}
+		this.#cachedActor = "unknown";
+		return this.#cachedActor;
+	}
+
+	// ---------------- internals: watcher poll ----------------
 
 	async #seedSnapshot(): Promise<void> {
 		await this.#ensureInit();
@@ -401,8 +883,6 @@ export class NamespaceBackend implements Backend {
 			this.#pollTimer = null;
 			void this.#poll();
 		}, this.#pollIntervalMs);
-		// Don't keep the Node process alive on the poll timer alone —
-		// the host (TUI / web) owns the lifetime.
 		(t as unknown as { unref?: () => void }).unref?.();
 		this.#pollTimer = t;
 	}
@@ -429,7 +909,6 @@ export class NamespaceBackend implements Backend {
 		prev: Map<string, string>,
 		next: Map<string, string>,
 	): Promise<void> {
-		// Added: in next, not in prev.
 		for (const [refname, oid] of next) {
 			if (!prev.has(refname)) {
 				const task = await this.#parseRef(refname, oid);
@@ -441,14 +920,8 @@ export class NamespaceBackend implements Backend {
 				if (task) this.#emit({ type: "changed", task });
 			}
 		}
-		// Removed: in prev, not in next.
 		for (const [refname] of prev) {
 			if (!next.has(refname)) {
-				// Synthesise a filePath value so the existing TaskEvent
-				// shape (which carries filePath on `removed`) still
-				// reaches the consumer. A future TaskEvent variant with
-				// `id` for namespace-emitted removals would be cleaner;
-				// scope-creep for T-032.
 				this.#emit({ type: "removed", filePath: refname });
 			}
 		}
@@ -509,8 +982,6 @@ export class NamespaceBackend implements Backend {
 			this.#autoFetchTimer = null;
 			void this.#runAutoFetch();
 		}, this.#autoFetchIntervalMs);
-		// Don't keep the Node process alive on the auto-fetch timer
-		// alone — same posture as the poll and push timers.
 		(t as unknown as { unref?: () => void }).unref?.();
 		this.#autoFetchTimer = t;
 	}
@@ -521,8 +992,6 @@ export class NamespaceBackend implements Backend {
 			this.#autoFetchInFlight = this.fetch();
 			await this.#autoFetchInFlight;
 		} catch (err) {
-			// Soft-fail: no network, no remote, transient error. Logged
-			// but never fatal — the next tick retries.
 			const msg = err instanceof Error ? err.message : String(err);
 			console.error(`[ordna-namespace] auto-fetch failed: ${msg}`);
 		} finally {

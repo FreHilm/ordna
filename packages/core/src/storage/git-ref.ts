@@ -168,6 +168,32 @@ export class GitRunner {
 		await this.run(["push", remote, refspec]);
 	}
 
+	/**
+	 * Push a single ref with `--force-with-lease` semantics. CAS at the
+	 * git protocol level: the remote accepts the push only if its
+	 * current ref value equals `expectedOld`. Empty string asserts the
+	 * ref must not exist on the remote yet (used for creates).
+	 *
+	 * On a collision the remote rejects the push; the failure surfaces
+	 * as a thrown Error with the relevant git stderr in the message,
+	 * which callers parse to drive reconciliation.
+	 */
+	async pushRefWithLease(
+		refname: string,
+		newOid: string,
+		expectedOld: string,
+		remote = "origin",
+	): Promise<void> {
+		// --force-with-lease=<ref>:<expected> + a plain (non-+) refspec.
+		// The lease is the CAS predicate; the refspec is the actual push.
+		await this.run([
+			"push",
+			`--force-with-lease=${refname}:${expectedOld}`,
+			remote,
+			`${refname}:${refname}`,
+		]);
+	}
+
 	/** Read the configured user identity for audit-log attribution. */
 	async userEmail(): Promise<string | null> {
 		try {

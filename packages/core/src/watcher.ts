@@ -4,16 +4,21 @@ import type { Task } from "./schema.js";
 /**
  * Event emitted by the backend's watcher.
  *
- * - `added`   : a new task appeared
- * - `changed` : an existing task's content changed
- * - `removed` : a task was deleted; carries `filePath` for file-mode
- *               (hybrid emits the same shape; namespace will gain an
- *               `id` variant once that backend lands in T-032)
+ * - `added`    : a new task appeared
+ * - `changed`  : an existing task's content changed
+ * - `removed`  : a task was deleted; carries `filePath` for file/hybrid
+ *                (and the synthetic `ref:<refname>` for namespace)
+ * - `renamed`  : namespace auto-renumber resolved a push-collision by
+ *                reallocating a fresh ID; carries both the old and new
+ *                IDs so the UI can show "previously known as X" and
+ *                clear any cached views keyed on `oldId`. Only the
+ *                namespace backend emits this.
  */
 export type TaskEvent =
 	| { type: "added"; task: Task }
 	| { type: "changed"; task: Task }
-	| { type: "removed"; filePath: string };
+	| { type: "removed"; filePath: string }
+	| { type: "renamed"; oldId: string; newId: string; task: Task };
 
 export type TaskEventListener = (event: TaskEvent) => void;
 

@@ -76,6 +76,13 @@ function wireWatcher(state: ServerState): void {
 				event.filePath.split("/").pop()?.replace(/\.md$/, "") ??
 				event.filePath;
 			state.broadcast({ type: "removed", id });
+		} else if (event.type === "renamed") {
+			state.broadcast({
+				type: "renamed",
+				oldId: event.oldId,
+				newId: event.newId,
+				task: toWireTask(event.task),
+			});
 		} else {
 			state.broadcast({ type: event.type, task: toWireTask(event.task) });
 		}

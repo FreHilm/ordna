@@ -95,7 +95,7 @@ constraints.
 | Working tree | Tasks visible as files | Tasks visible as files | Untouched — no `tasks/` dir |
 | Requires git | No | Yes | Yes |
 | Multi-machine sync | Regular `git push` / `pull` | Same + synced ID allocator | Automatic push per write; fetch on 60s timer (configurable) or manual |
-| Safe IDs across offline writers | No (collisions possible) | Yes (CAS on state ref) | Yes (CAS per-task ref) |
+| Safe IDs across offline writers | No (collisions possible) | Yes (CAS on state ref) | Yes (CAS on state ref + auto-renumber on push collision) |
 | Per-task history | `git log tasks/T-001.md` | Same as file (+ state-ref audit log) | None — refs point at blobs, no commit chain |
 | `cat tasks/T-001.md` works | Yes | Yes | No — use `ordna show T-001` |
 | Agents read files directly | Yes | Yes | No — via `ordna` CLI only |
@@ -143,6 +143,17 @@ Pulling other people's updates is via an auto-fetch timer (default 60s,
 configurable) plus a manual fetch — button in the web header, `r` in the
 TUI.
 
+**Offline safety.** ID allocation goes through a shared
+`refs/ordna/state` ref (same primitive as hybrid). If two writers
+create a task offline and both land on `T-042`, the second pusher's
+collision is detected by `--force-with-lease`, Ordna fetches the
+remote winner, allocates a fresh id (e.g. `T-047`), rewrites the local
+blob, cascades any local `depends_on` references to the old id, and
+emits a `renamed` event. The UI shows a "previously known as T-042"
+banner on the affected task. Disable with
+`namespace.autoRenumberOnConflict: false` if stable ids in external
+links matter more than the friction of manual reconciliation.
+
 **Pick this when:** you need the working tree pristine. E.g. the repo
 ships as a published library and you don't want `tasks/` in the package,
 or you want strict separation between "task state" and "code state."
@@ -184,8 +195,9 @@ storage: file        # or "hybrid" or "namespace"
 
 # Namespace-mode tuning — ignored in file/hybrid:
 namespace:
-  pollIntervalMs: 1000        # how often the watcher checks for ref changes
-  autoFetchIntervalMs: 60000  # background fetch from origin (0 disables)
+  pollIntervalMs: 1000           # how often the watcher checks for ref changes
+  autoFetchIntervalMs: 60000     # background fetch from origin (0 disables)
+  autoRenumberOnConflict: true   # auto-renumber + cascade on push collision (false = surface a loud error instead)
 ```
 
 ### `ORDNA_STORAGE` env var

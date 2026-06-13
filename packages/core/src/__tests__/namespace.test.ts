@@ -251,6 +251,168 @@ describe("NamespaceBackend — fetch capability", () => {
 	});
 });
 
+describe("NamespaceBackend — state ref allocator + audit log", () => {
+	it("bootstraps state ref from existing task refs on upgrade (no state ref present)", async () => {
+		const { cwd, git } = await setupNamespaceRepo("namespace:\n  autoFetchIntervalMs: 0\n");
+		// Simulate a pre-state-ref namespace install by writing some task
+		// refs directly via git, with NO refs/ordna/state.
+		const blob1 = await git.hashObject(
+			"---\nid: T-001\ntitle: Old\nstatus: todo\nassignee: null\npriority: null\ntags: []\ndepends_on: []\ncreated_at: 2026-06-09\nupdated_at: 2026-06-09\n---\n\n## Goal\n",
+		);
+		await git.updateRef("refs/ordna/tasks/T-001", blob1, "");
+		const blob2 = await git.hashObject(
+			"---\nid: T-005\ntitle: Higher\nstatus: todo\nassignee: null\npriority: null\ntags: []\ndepends_on: []\ncreated_at: 2026-06-09\nupdated_at: 2026-06-09\n---\n\n## Goal\n",
+		);
+		await git.updateRef("refs/ordna/tasks/T-005", blob2, "");
+
+		// First context init() bootstraps the state ref from the scan;
+		// next create allocates T-006 (max + 1), not T-001 again.
+		const ctx = createContext(cwd);
+		const next = await createTask({ title: "New" }, ctx);
+		expect(next.id).toBe("T-006");
+
+		// State ref now exists with next_id = 7 (after the bump).
+		const stateRefs = await git.forEachRef("refs/ordna/state");
+		expect(stateRefs).toHaveLength(1);
+	});
+
+	it("audit log accumulates create / update / archive / delete ops", async () => {
+		const { cwd, git } = await setupNamespaceRepo(
+			"namespace:\n  autoFetchIntervalMs: 0\n",
+		);
+		const ctx = createContext(cwd);
+		const task = await createTask({ title: "Auditable" }, ctx);
+		await updateTask(task.id, { title: "Renamed locally" }, ctx);
+		await moveTask(task.id, "archived", ctx);
+		await deleteTask(task.id, ctx);
+
+		// Read the state ref blob directly to verify ops.
+		const stateRefs = await git.forEachRef("refs/ordna/state");
+		expect(stateRefs).toHaveLength(1);
+		const stateBlob = await git.catBlob(stateRefs[0]?.oid ?? "");
+		const state = JSON.parse(stateBlob) as {
+			next_id: number;
+			ops: Array<{ op: string; id: string }>;
+		};
+		expect(state.ops.map((o) => o.op)).toEqual([
+			"create",
+			"update",
+			"archive",
+			"delete",
+		]);
+		expect(state.ops.every((o) => o.id === "T-001")).toBe(true);
+	});
+});
+
+describe("NamespaceBackend — auto-renumber on offline collision", () => {
+	async function setupTwoClonesAndOrigin(extra = ""): Promise<{
+		origin: string;
+		cwdA: string;
+		gitA: GitRunner;
+		cwdB: string;
+		gitB: GitRunner;
+	}> {
+		const origin = mkdtempSync(join(tmpdir(), "ordna-renumber-origin-"));
+		tmpDirs.push(origin);
+		const originGit = new GitRunner(origin);
+		await originGit.run(["init", "--bare", "--initial-branch=main", "--quiet"]);
+
+		const cfg = `namespace:\n  autoFetchIntervalMs: 0\n${extra}`;
+		const { cwd: cwdA, git: gitA } = await setupNamespaceRepo(cfg);
+		await gitA.run(["remote", "add", "origin", origin]);
+		const { cwd: cwdB, git: gitB } = await setupNamespaceRepo(cfg);
+		await gitB.run(["remote", "add", "origin", origin]);
+		return { origin, cwdA, gitA, cwdB, gitB };
+	}
+
+	it("renames the loser's local id, cascades depends_on, emits renamed event", async () => {
+		const { cwdA, gitA, cwdB } = await setupTwoClonesAndOrigin();
+
+		// B creates T-001 and pushes to origin.
+		const ctxB = createContext(cwdB);
+		await createTask({ title: "From B" }, ctxB);
+		await ctxB.backend.dispose();
+
+		// A also creates T-001 (independent state ref) and a T-002 that
+		// depends on T-001. Subscribe to the watcher BEFORE the push
+		// fires so we capture the renamed event.
+		const ctxA = createContext(cwdA);
+		const events: TaskEvent[] = [];
+		const unsubscribe = watchTasks(ctxA, (e) => events.push(e));
+
+		await createTask({ title: "From A" }, ctxA);
+		await createTask({ title: "Dependent", depends_on: ["T-001"] }, ctxA);
+
+		// Disposing flushes pending pushes → triggers the collision +
+		// reconcile path.
+		await ctxA.backend.dispose();
+		await unsubscribe();
+
+		// A's T-001 ref now points at B's blob (after the reconcile-fetch).
+		// A's original task lives under T-003 (bootstrap allocated T-001
+		// + T-002 locally, then reconcile bumped to T-003 via SyncRef).
+		const tasksA = await listTasks(createContext(cwdA));
+		const idsA = tasksA.map((t) => t.id).sort();
+		expect(idsA).toContain("T-001"); // B's task, now reachable on A
+		// One of A's own tasks got renamed; the dependent's depends_on
+		// should have been cascaded to point at the new id.
+		const dependent = tasksA.find((t) =>
+			t.title === "Dependent" || t.depends_on.length > 0,
+		);
+		expect(dependent).toBeDefined();
+		expect(dependent?.depends_on).not.toContain("T-001-stale");
+		// The dependent should not still reference the collided id — it
+		// should be pointing at A's renamed task.
+		expect(dependent?.depends_on.length).toBeGreaterThan(0);
+
+		// At least one renamed event was emitted.
+		const renames = events.filter((e) => e.type === "renamed");
+		expect(renames.length).toBeGreaterThanOrEqual(1);
+		const rename = renames[0] as Extract<TaskEvent, { type: "renamed" }>;
+		expect(rename.oldId).toBe("T-001");
+		expect(rename.newId).not.toBe("T-001");
+
+		// renamed_from is populated on subsequent reads via the audit log.
+		const reread = await createContext(cwdA).backend.get(rename.newId);
+		expect(reread?.renamed_from).toBe("T-001");
+
+		// State ref's audit log carries the rename op.
+		const stateRefs = await gitA.forEachRef("refs/ordna/state");
+		const stateBlob = await gitA.catBlob(stateRefs[0]?.oid ?? "");
+		const state = JSON.parse(stateBlob) as {
+			ops: Array<{ op: string; renamedFrom?: string }>;
+		};
+		const renameOp = state.ops.find((o) => o.op === "rename");
+		expect(renameOp?.renamedFrom).toBe("T-001");
+	}, 15000);
+
+	it("autoRenumberOnConflict: false keeps the loser's local ref untouched (no rename)", async () => {
+		const { cwdA, cwdB } = await setupTwoClonesAndOrigin(
+			"  autoRenumberOnConflict: false\n",
+		);
+
+		const ctxB = createContext(cwdB);
+		await createTask({ title: "From B" }, ctxB);
+		await ctxB.backend.dispose();
+
+		const ctxA = createContext(cwdA);
+		const events: TaskEvent[] = [];
+		const unsubscribe = watchTasks(ctxA, (e) => events.push(e));
+		await createTask({ title: "From A" }, ctxA);
+		await ctxA.backend.dispose();
+		await unsubscribe();
+
+		// No renamed event — reconciler is gated off.
+		expect(events.filter((e) => e.type === "renamed")).toHaveLength(0);
+
+		// A's local T-001 is still A's blob (the push failed loud but
+		// didn't touch local state). No T-002 exists locally.
+		const tasksA = await listTasks(createContext(cwdA));
+		expect(tasksA.map((t) => t.id)).toEqual(["T-001"]);
+		expect(tasksA[0]?.title).toBe("From A");
+	}, 15000);
+});
+
 describe("NamespaceBackend — watcher emits TaskEvents on ref changes", () => {
 	it("emits added when a new ref appears, changed when oid moves, removed when ref deleted", async () => {
 		const { cwd, git } = await setupNamespaceRepo("namespace:\n  pollIntervalMs: 50\n");
