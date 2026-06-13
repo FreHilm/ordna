@@ -772,6 +772,7 @@ export function TaskEditor({
 			height={height}
 			paddingX={2}
 			paddingY={1}
+			overflowY="hidden"
 		>
 			<Box>
 				<Text color={theme.accent} bold>
@@ -876,6 +877,7 @@ export function TaskEditor({
 				flexDirection="column"
 				width={innerWidth}
 				height={sectionsAreaHeight}
+				overflowY="hidden"
 			>
 				{sectionLayout.aboveCount > 0 ? (
 					<Text color={theme.textMuted} italic wrap="truncate-end">

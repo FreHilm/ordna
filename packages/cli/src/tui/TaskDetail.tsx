@@ -141,6 +141,7 @@ export function TaskDetail({
 			height={height}
 			paddingX={2}
 			paddingY={1}
+			overflowY="hidden"
 		>
 			<Box>
 				<Text color={theme.accent} bold>
@@ -190,6 +191,7 @@ export function TaskDetail({
 				flexDirection="column"
 				width={innerWidth}
 				height={sectionsHeight}
+				overflowY="hidden"
 			>
 				{needsScroll ? (
 					<Text color={theme.textMuted} italic wrap="truncate-end">
