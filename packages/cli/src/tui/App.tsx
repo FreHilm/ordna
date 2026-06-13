@@ -165,7 +165,10 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 		};
 	}, [ctx, reload, applyEvent]);
 
-	const sidebarRows = useMemo(() => buildSidebarRows(tasks, statuses), [tasks, statuses]);
+	const sidebarRows = useMemo(
+		() => buildSidebarRows(tasks, statuses, filter),
+		[tasks, statuses, filter],
+	);
 	const flatRows = useMemo(() => flattenSidebarRows(sidebarRows), [sidebarRows]);
 
 	useEffect(() => {
@@ -337,7 +340,17 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 				if (focus === "board") {
 					if (!sidebarPinned) setSidebarPeek(true);
 					setFocus("sidebar");
-					setSidebarFocusedKey(rowKey(filter));
+					// If the current filter has no matching row (shouldn't
+					// happen now that buildSidebarRows keeps the active
+					// tag visible, but defense-in-depth) fall back to the
+					// first row so ↑/↓ navigation still works.
+					const filterKey = rowKey(filter);
+					const exists = flatRows.some((r) => rowKey(r.item) === filterKey);
+					setSidebarFocusedKey(
+						exists
+							? filterKey
+							: rowKey(flatRows[0]?.item ?? { kind: "all" }),
+					);
 				} else {
 					if (sidebarPeek) setSidebarPeek(false);
 					setFocus("board");
@@ -353,13 +366,25 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 				}
 				if (key.upArrow || input === "k") {
 					const idx = flatRows.findIndex((r) => rowKey(r.item) === sidebarFocusedKey);
-					if (idx > 0) setSidebarFocusedKey(rowKey(flatRows[idx - 1]?.item ?? flatRows[0]?.item ?? { kind: "all" }));
+					if (idx > 0) {
+						setSidebarFocusedKey(
+							rowKey(flatRows[idx - 1]?.item ?? flatRows[0]?.item ?? { kind: "all" }),
+						);
+					} else if (idx === -1 && flatRows.length > 0) {
+						// Orphaned focus key — recover by landing on the first row.
+						setSidebarFocusedKey(rowKey(flatRows[0]?.item ?? { kind: "all" }));
+					}
 					return;
 				}
 				if (key.downArrow || input === "j") {
 					const idx = flatRows.findIndex((r) => rowKey(r.item) === sidebarFocusedKey);
 					if (idx >= 0 && idx < flatRows.length - 1) {
-						setSidebarFocusedKey(rowKey(flatRows[idx + 1]?.item ?? flatRows[0]?.item ?? { kind: "all" }));
+						setSidebarFocusedKey(
+							rowKey(flatRows[idx + 1]?.item ?? flatRows[0]?.item ?? { kind: "all" }),
+						);
+					} else if (idx === -1 && flatRows.length > 0) {
+						// Same orphan-recovery as ↑ above.
+						setSidebarFocusedKey(rowKey(flatRows[0]?.item ?? { kind: "all" }));
 					}
 					return;
 				}

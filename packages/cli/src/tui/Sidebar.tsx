@@ -35,6 +35,7 @@ function rowKey(item: SidebarItem): string {
 export function buildSidebarRows(
 	tasks: Task[],
 	statuses: string[],
+	activeFilter?: SidebarItem,
 ): { views: SidebarRow[]; priorities: SidebarRow[]; tags: SidebarRow[] } {
 	const active = tasks.filter((t) => t.status !== "archived");
 
@@ -65,15 +66,38 @@ export function buildSidebarRows(
 
 	const tagCounts = new Map<string, number>();
 	for (const t of active) for (const tag of t.tags) tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
+	// Cap at 20 visible tags. Sorted by count descending so the most-used
+	// tags surface first; low-count tags beyond the cap are hidden until
+	// the user adds more tasks with them. 20 covers any realistic project
+	// without overflowing the sidebar height on typical terminals.
 	const tags: SidebarRow[] = [...tagCounts.entries()]
 		.sort((a, b) => b[1] - a[1])
-		.slice(0, 8)
+		.slice(0, 20)
 		.map(([tag, count]) => ({
 			item: { kind: "tag", tag },
 			label: tag,
 			count,
 			dotColor: tagColor(tag),
 		}));
+
+	// Keep the user's currently-selected tag visible even if archiving
+	// dropped its count to zero — otherwise the filter is orphaned (no
+	// matching row), the active-row highlight disappears, and `Tab`'s
+	// sidebar focus lands on a key that doesn't exist in flatRows, which
+	// breaks ↑/↓ navigation.
+	if (
+		activeFilter?.kind === "tag" &&
+		!tags.some(
+			(r) => r.item.kind === "tag" && r.item.tag === activeFilter.tag,
+		)
+	) {
+		tags.unshift({
+			item: { kind: "tag", tag: activeFilter.tag },
+			label: activeFilter.tag,
+			count: 0,
+			dotColor: tagColor(activeFilter.tag),
+		});
+	}
 
 	return { views, priorities, tags };
 }
