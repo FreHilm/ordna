@@ -59,6 +59,12 @@ export function App(): JSX.Element {
 	const [paletteOpen, setPaletteOpen] = useState(false);
 	const [cheatOpen, setCheatOpen] = useState(false);
 	const [isFetching, setIsFetching] = useState(false);
+	// Sidebar fold state. `foldable` = the window is narrow enough that
+	// the filter panel has detached into a floating overlay (engaged
+	// ~2s after the window drops to <= 980px). `sidebarRevealed` = the
+	// floating panel is currently slid in over the board.
+	const [foldable, setFoldable] = useState(false);
+	const [sidebarRevealed, setSidebarRevealed] = useState(false);
 
 	useEffect(() => {
 		document.documentElement.setAttribute("data-theme", theme);
@@ -150,6 +156,47 @@ export function App(): JSX.Element {
 		}
 	}, [isFetching]);
 
+	// Detach the sidebar into a floating panel when the window is narrow.
+	// Crossing to <= 980px starts a 2s grace timer before folding (so a
+	// transient resize doesn't yank the panel); widening back cancels it
+	// and re-docks immediately.
+	useEffect(() => {
+		const NARROW_PX = 980;
+		const FOLD_DELAY_MS = 2000;
+		let foldTimer: ReturnType<typeof setTimeout> | null = null;
+		let isFoldable = false;
+
+		const apply = (): void => {
+			const narrow = window.innerWidth <= NARROW_PX;
+			if (narrow) {
+				if (!isFoldable && foldTimer === null) {
+					foldTimer = setTimeout(() => {
+						foldTimer = null;
+						isFoldable = true;
+						setFoldable(true);
+					}, FOLD_DELAY_MS);
+				}
+			} else {
+				if (foldTimer) {
+					clearTimeout(foldTimer);
+					foldTimer = null;
+				}
+				if (isFoldable) {
+					isFoldable = false;
+					setFoldable(false);
+				}
+				setSidebarRevealed(false);
+			}
+		};
+
+		apply();
+		window.addEventListener("resize", apply);
+		return () => {
+			window.removeEventListener("resize", apply);
+			if (foldTimer) clearTimeout(foldTimer);
+		};
+	}, []);
+
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent): void => {
 			const target = e.target as HTMLElement | null;
@@ -185,11 +232,12 @@ export function App(): JSX.Element {
 			} else if (e.key === "Escape") {
 				if (paletteOpen) setPaletteOpen(false);
 				else if (cheatOpen) setCheatOpen(false);
+				else if (sidebarRevealed) setSidebarRevealed(false);
 			}
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
-	}, [paletteOpen, cheatOpen, toggleTheme, config?.capabilities?.fetch, runFetch]);
+	}, [paletteOpen, cheatOpen, sidebarRevealed, toggleTheme, config?.capabilities?.fetch, runFetch]);
 
 	const filtered = useMemo<WireTask[]>(() => {
 		const q = query.trim().toLowerCase();
@@ -378,8 +426,37 @@ export function App(): JSX.Element {
 				</button>
 			</div>
 
-			<div className="main">
-				<div className="sidebar">
+			<div
+				className={`main${foldable ? " sidebar-foldable" : ""}${
+					foldable && sidebarRevealed ? " sidebar-revealed" : ""
+				}`}
+			>
+				{foldable ? (
+					<button
+						type="button"
+						className="sidebar-hotzone"
+						aria-label="Show filters"
+						aria-expanded={sidebarRevealed}
+						onMouseEnter={() => setSidebarRevealed(true)}
+						onFocus={() => setSidebarRevealed(true)}
+						onClick={() => setSidebarRevealed(true)}
+					/>
+				) : null}
+				{foldable && sidebarRevealed ? (
+					<button
+						type="button"
+						className="sidebar-scrim"
+						aria-label="Close filters"
+						tabIndex={-1}
+						onClick={() => setSidebarRevealed(false)}
+					/>
+				) : null}
+				<div
+					className="sidebar"
+					onMouseLeave={() => {
+						if (foldable) setSidebarRevealed(false);
+					}}
+				>
 					<div className="side-head">Views</div>
 					<button
 						type="button"

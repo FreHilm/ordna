@@ -259,6 +259,88 @@ select {
 	display: grid;
 	grid-template-columns: 220px 1fr;
 	min-height: 0;
+	transition: grid-template-columns 0.28s ease;
+}
+
+/* ---------- Foldable sidebar (narrow viewport) ----------
+   Engaged by JS ~2s after the window drops to <= 980px. The grid
+   column collapses to 0 so the board reclaims the full width, and the
+   sidebar detaches into a fixed-position floating panel hidden off the
+   left edge. A thin hot-zone on the left edge (or focus/tap) reveals
+   it as an overlay above the board. z-indexes stay below modals
+   (100+) and toasts (55) so those still cover the panel. */
+.main.sidebar-foldable {
+	grid-template-columns: 0 1fr;
+}
+
+/* A fixed-position sidebar is removed from grid auto-placement, so the
+   board would otherwise fall into the now-0-width first track. Pin it
+   to the second (1fr) track so it fills the reclaimed width. */
+.main.sidebar-foldable .boardwrap {
+	grid-column: 2;
+}
+
+.main.sidebar-foldable .sidebar {
+	position: fixed;
+	top: 56px; /* below the topbar */
+	left: 0;
+	bottom: 0;
+	width: 220px;
+	z-index: 46;
+	transform: translateX(-100%);
+	transition: transform 0.28s ease, box-shadow 0.28s ease;
+	will-change: transform;
+}
+
+.main.sidebar-foldable.sidebar-revealed .sidebar {
+	transform: translateX(0);
+	box-shadow: 0 8px 40px rgba(0, 0, 0, 0.35);
+}
+
+/* The hot-zone and scrim are only rendered while foldable, but they are
+   `position: fixed` unconditionally so they can never participate in
+   the grid flow and shove the board even if a rule is missing. */
+.sidebar-hotzone {
+	position: fixed;
+	top: 56px;
+	left: 0;
+	bottom: 0;
+	width: 14px;
+	z-index: 40;
+	background: transparent;
+	border: none;
+	padding: 0;
+	cursor: pointer;
+}
+/* subtle left-edge affordance so the hidden panel is discoverable */
+.sidebar-hotzone::after {
+	content: "";
+	position: absolute;
+	top: 50%;
+	left: 0;
+	transform: translateY(-50%);
+	width: 3px;
+	height: 44px;
+	border-radius: 0 3px 3px 0;
+	background: var(--accent-line);
+	opacity: 0.45;
+	transition: opacity 0.15s, width 0.15s;
+}
+.sidebar-hotzone:hover::after,
+.sidebar-hotzone:focus-visible::after {
+	opacity: 1;
+	width: 4px;
+}
+
+/* transparent click/tap catcher to dismiss the revealed panel */
+.sidebar-scrim {
+	position: fixed;
+	inset: 56px 0 0 0;
+	z-index: 44;
+	background: transparent;
+	border: none;
+	padding: 0;
+	cursor: default;
 }
 
 /* ---------- Sidebar ---------- */
@@ -442,8 +524,8 @@ select {
 }
 
 .col {
- 	flex: 1 1 0;
-  min-width: 280px;
+	flex: 1 1 0;
+	min-width: 220px;
 	display: flex;
 	flex-direction: column;
 	min-height: 0;
