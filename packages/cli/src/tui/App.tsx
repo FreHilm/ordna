@@ -295,12 +295,14 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 	// Re-read a task after an attachment mutation and refresh both the
 	// board state and the open detail view. The watcher fires too (and is
 	// a no-op merge), but file reads beat the poll/debounce so the detail
-	// updates instantly.
-	const refreshDetail = async (id: string): Promise<void> => {
+	// updates instantly. Returns the fresh task so callers coming from a
+	// non-detail mode (e.g. the attach prompt) can land on it explicitly.
+	const refreshDetail = async (id: string): Promise<Task | null> => {
 		const fresh = await getTask(id, ctx);
-		if (!fresh) return;
+		if (!fresh) return null;
 		setTasks((prev) => mergeTask(prev, fresh));
 		setMode((m) => (m.kind === "detail" && m.task.id === id ? { kind: "detail", task: fresh } : m));
+		return fresh;
 	};
 
 	const attachFile = async (task: Task, rawPath: string): Promise<void> => {
@@ -312,7 +314,11 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 		try {
 			const bytes = await readFile(abs);
 			const att = await addAttachment(task.id, { name: basename(abs), bytes }, ctx);
-			await refreshDetail(task.id);
+			// Close the prompt: we're in "attach" mode here, so refreshDetail's
+			// conditional mode-swap doesn't fire — set the detail view with the
+			// re-read task explicitly so the new attachment shows immediately.
+			const fresh = await refreshDetail(task.id);
+			setMode({ kind: "detail", task: fresh ?? task });
 			flashToast(`Attached ${att.name}`);
 		} catch (error) {
 			setMode({ kind: "detail", task });
