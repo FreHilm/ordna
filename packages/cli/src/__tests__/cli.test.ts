@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -96,6 +96,56 @@ describe("ordna CLI", () => {
 		const r = run(cwd, ["show", "T-999"]);
 		expect(r.code).toBe(1);
 		expect(r.stderr).toContain("not found");
+	});
+
+	it("attach adds a file, attachments lists it, show includes it", () => {
+		const srcPath = join(cwd, "note.txt");
+		writeFileSync(srcPath, "hello attachment", "utf8");
+
+		const attached = run(cwd, ["attach", "T-001", srcPath]);
+		expect(attached.code).toBe(0);
+		expect(attached.stdout).toContain("Attached");
+		expect(attached.stdout).toContain("note.txt");
+
+		// bytes landed under tasks/attachments/<id>/ and frontmatter updated
+		expect(existsSync(join(cwd, "tasks", "attachments", "T-001", "a1-note.txt"))).toBe(true);
+		expect(readFileSync(join(cwd, "tasks", "T-001.md"), "utf8")).toContain("attachments:");
+
+		const listed = run(cwd, ["attachments", "T-001"]);
+		expect(listed.code).toBe(0);
+		expect(listed.stdout).toContain("a1");
+		expect(listed.stdout).toContain("note.txt");
+
+		const shown = run(cwd, ["show", "T-001"]);
+		expect(shown.stdout).toContain("attachments:");
+		expect(shown.stdout).toContain("note.txt");
+	});
+
+	it("detach removes the attachment", () => {
+		const before = run(cwd, ["attachments", "T-001"]);
+		expect(before.stdout).toContain("note.txt");
+
+		const detached = run(cwd, ["detach", "T-001", "a1"]);
+		expect(detached.code).toBe(0);
+		expect(detached.stdout).toContain("Removed");
+
+		const after = run(cwd, ["attachments", "T-001"]);
+		expect(after.stdout).toContain("no attachments");
+		expect(existsSync(join(cwd, "tasks", "attachments", "T-001", "a1-note.txt"))).toBe(false);
+	});
+
+	it("attach to an unknown task exits 1", () => {
+		const srcPath = join(cwd, "note2.txt");
+		writeFileSync(srcPath, "x", "utf8");
+		const r = run(cwd, ["attach", "T-999", srcPath]);
+		expect(r.code).toBe(1);
+		expect(r.stderr).toContain("not found");
+	});
+
+	it("attach with a missing source file exits 1", () => {
+		const r = run(cwd, ["attach", "T-001", join(cwd, "does-not-exist.bin")]);
+		expect(r.code).toBe(1);
+		expect(r.stderr).toContain("Cannot read file");
 	});
 
 	it("skill install writes AGENTS.md from the bundled template", () => {

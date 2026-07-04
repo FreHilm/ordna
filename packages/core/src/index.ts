@@ -18,6 +18,7 @@ export {
 } from "./parser.js";
 export type {
 	AcceptanceItem,
+	Attachment,
 	Priority,
 	RawFrontmatter,
 	SchemaMode,
@@ -35,7 +36,9 @@ export {
 	priorityEnum,
 } from "./schema.js";
 export {
+	addAttachment,
 	ARCHIVED_STATUS,
+	canAttach,
 	canFetch,
 	createContext,
 	createTask,
@@ -45,13 +48,24 @@ export {
 	isKnownStatus,
 	listTasks,
 	moveTask,
+	readAttachment,
+	removeAttachment,
 	updateTask,
 	type ListTasksOptions,
 	type StoreContext,
 } from "./store.js";
-export type { FetchResult } from "./storage/backend.js";
+export type {
+	AttachmentInput,
+	AttachmentStore,
+	FetchResult,
+} from "./storage/backend.js";
 export { defaultSectionsFor, serializeTask } from "./writer.js";
-export { watchTasks, type TaskEvent, type TaskEventListener, type WatchOptions } from "./watcher.js";
+export {
+	watchTasks,
+	type TaskEvent,
+	type TaskEventListener,
+	type WatchOptions,
+} from "./watcher.js";
 export {
 	type DetectedMode,
 	NeedsModeSelection,

@@ -1500,3 +1500,116 @@ select {
 ::-webkit-scrollbar-track {
 	background: transparent;
 }
+
+/* ---- attachments ---- */
+.modal {
+	position: relative;
+}
+
+.modal-dragging {
+	outline: 2px dashed var(--accent-line);
+	outline-offset: -6px;
+}
+
+.modal-drop-overlay {
+	position: absolute;
+	inset: 0;
+	z-index: 5;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 10px;
+	background: var(--accent-soft);
+	color: var(--accent);
+	font-size: 14px;
+	font-weight: 600;
+	pointer-events: none;
+	border-radius: var(--r-xl);
+}
+.modal-drop-overlay svg {
+	width: 28px;
+	height: 28px;
+}
+
+.attachments {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin-bottom: 10px;
+}
+
+.attachment {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 6px;
+	border: 1px solid var(--line);
+	border-radius: var(--r-md, 8px);
+	background: var(--bg-2);
+}
+
+.attachment-preview {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 36px;
+	height: 36px;
+	flex: none;
+	border-radius: 6px;
+	overflow: hidden;
+	background: var(--bg-3);
+	color: var(--text-3);
+}
+.attachment-preview img {
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+}
+
+.attachment-meta {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	flex: 1;
+}
+.attachment-name {
+	font-size: 13px;
+	color: var(--text-1, var(--text-2));
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.attachment-size {
+	font-size: 11px;
+	color: var(--text-3);
+}
+
+.dropzone {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	width: 100%;
+	padding: 12px;
+	border: 1px dashed var(--line-strong);
+	border-radius: var(--r-md, 8px);
+	background: transparent;
+	color: var(--text-3);
+	font-size: 12.5px;
+	cursor: pointer;
+	transition: border-color 0.12s, color 0.12s, background 0.12s;
+}
+.dropzone:hover:not(:disabled) {
+	border-color: var(--accent-line);
+	color: var(--text-2);
+}
+.dropzone.active {
+	border-color: var(--accent);
+	color: var(--accent);
+	background: var(--accent-soft);
+}
+.dropzone:disabled {
+	opacity: 0.6;
+	cursor: default;
+}

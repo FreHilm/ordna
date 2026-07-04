@@ -1,42 +1,45 @@
 import { spawn } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import { basename } from "node:path";
 import {
 	ARCHIVED_STATUS,
+	type Attachment,
+	type StoreContext,
+	type Task,
+	type TaskEvent,
+	addAttachment,
+	canAttach,
 	canFetch,
 	createContext as createStoreContext,
 	createTask,
 	fetchTasks,
+	getTask,
 	listTasks,
 	moveTask,
+	removeAttachment,
 	updateTask,
 	watchTasks,
-	type StoreContext,
-	type Task,
-	type TaskEvent,
 } from "@frehilm/ordna-core";
 import { Box, Text, useApp, useInput, useStdin } from "ink";
-import React, {
-	startTransition,
-	useCallback,
-	useEffect,
-	useMemo,
-	useState,
-} from "react";
+import type React from "react";
+import { startTransition, useCallback, useEffect, useMemo, useState } from "react";
 import { type AgentHookConfig, loadAgentHook, sendAgent } from "../agent.js";
+import { expandPath, openPath, resolveOpenablePath } from "../lib/attachment-utils.js";
 import { Column } from "./Column.js";
-import { useTerminalSize } from "./hooks.js";
 import { SelectPrompt } from "./SelectPrompt.js";
 import {
 	Sidebar,
+	type SidebarItem,
+	type SidebarRow,
 	buildSidebarRows,
 	matchesFilter,
 	rowKey,
-	type SidebarItem,
-	type SidebarRow,
 } from "./Sidebar.js";
 import { Subbar } from "./Subbar.js";
 import { TaskDetail } from "./TaskDetail.js";
 import { TaskEditor } from "./TaskEditor.js";
 import { TextPrompt } from "./TextPrompt.js";
+import { useTerminalSize } from "./hooks.js";
 import { theme } from "./theme.js";
 
 type Mode =
@@ -46,6 +49,7 @@ type Mode =
 	| { kind: "create" }
 	| { kind: "assign"; task: Task }
 	| { kind: "move"; task: Task }
+	| { kind: "attach"; task: Task }
 	| { kind: "search" };
 
 type Focus = "board" | "sidebar";
@@ -286,6 +290,56 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 		}
 	};
 
+	const attachSupported = canAttach(ctx);
+
+	// Re-read a task after an attachment mutation and refresh both the
+	// board state and the open detail view. The watcher fires too (and is
+	// a no-op merge), but file reads beat the poll/debounce so the detail
+	// updates instantly.
+	const refreshDetail = async (id: string): Promise<void> => {
+		const fresh = await getTask(id, ctx);
+		if (!fresh) return;
+		setTasks((prev) => mergeTask(prev, fresh));
+		setMode((m) => (m.kind === "detail" && m.task.id === id ? { kind: "detail", task: fresh } : m));
+	};
+
+	const attachFile = async (task: Task, rawPath: string): Promise<void> => {
+		if (rawPath.trim().length === 0) {
+			setMode({ kind: "detail", task });
+			return;
+		}
+		const abs = expandPath(rawPath, ctx.cwd);
+		try {
+			const bytes = await readFile(abs);
+			const att = await addAttachment(task.id, { name: basename(abs), bytes }, ctx);
+			await refreshDetail(task.id);
+			flashToast(`Attached ${att.name}`);
+		} catch (error) {
+			setMode({ kind: "detail", task });
+			flashToast((error as Error).message);
+		}
+	};
+
+	const openAttachmentFor = async (task: Task, att: Attachment): Promise<void> => {
+		try {
+			const path = await resolveOpenablePath(ctx, task, att);
+			openPath(path);
+			flashToast(`Opening ${att.name}`);
+		} catch (error) {
+			flashToast((error as Error).message);
+		}
+	};
+
+	const removeAttachmentFor = async (task: Task, att: Attachment): Promise<void> => {
+		try {
+			await removeAttachment(task.id, att.id, ctx);
+			await refreshDetail(task.id);
+			flashToast(`Removed ${att.name}`);
+		} catch (error) {
+			flashToast((error as Error).message);
+		}
+	};
+
 	const triggerAgent = async (task: Task): Promise<void> => {
 		if (!agentHook) return;
 		try {
@@ -346,11 +400,7 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 					// first row so ↑/↓ navigation still works.
 					const filterKey = rowKey(filter);
 					const exists = flatRows.some((r) => rowKey(r.item) === filterKey);
-					setSidebarFocusedKey(
-						exists
-							? filterKey
-							: rowKey(flatRows[0]?.item ?? { kind: "all" }),
-					);
+					setSidebarFocusedKey(exists ? filterKey : rowKey(flatRows[0]?.item ?? { kind: "all" }));
 				} else {
 					if (sidebarPeek) setSidebarPeek(false);
 					setFocus("board");
@@ -515,10 +565,7 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 		setMode({ kind: "browse" });
 	};
 
-	const moveOptions = useMemo(
-		() => [...statuses, ARCHIVED_STATUS],
-		[statuses],
-	);
+	const moveOptions = useMemo(() => [...statuses, ARCHIVED_STATUS], [statuses]);
 
 	const sidebarWidth = sidebarVisible ? SIDEBAR_WIDTH : 0;
 	const boardAreaWidth = Math.max(30, termCols - sidebarWidth);
@@ -549,9 +596,7 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 			const total = all.length;
 			const needsScroll = total > columnBodyLines;
 			// Reserve 1 row top + 1 row bottom for scroll indicators when needed.
-			const visibleCount = needsScroll
-				? Math.max(1, columnBodyLines - 2)
-				: columnBodyLines;
+			const visibleCount = needsScroll ? Math.max(1, columnBodyLines - 2) : columnBodyLines;
 			const maxOffset = Math.max(0, total - visibleCount);
 			const storedOffset = scrollOffsets[status] ?? 0;
 			const offset = Math.max(0, Math.min(maxOffset, storedOffset));
@@ -572,9 +617,7 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 		(status: string, nextRow: number, all: Task[]): void => {
 			const total = all.length;
 			const needsScroll = total > columnBodyLines;
-			const visibleCount = needsScroll
-				? Math.max(1, columnBodyLines - 2)
-				: columnBodyLines;
+			const visibleCount = needsScroll ? Math.max(1, columnBodyLines - 2) : columnBodyLines;
 			setScrollOffsets((prev) => {
 				const cur = prev[status] ?? 0;
 				let next = cur;
@@ -598,9 +641,7 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 				const all = groups.get(s) ?? [];
 				const layout = columnLayout(s, all);
 				const isFocusedCol = idx === columnIndex && mode.kind === "browse" && focus === "board";
-				const selectedRelativeIndex = isFocusedCol
-					? rowIndex - layout.offset
-					: -1;
+				const selectedRelativeIndex = isFocusedCol ? rowIndex - layout.offset : -1;
 				let w: number;
 				if (isArchive) {
 					w = normalColWidth;
@@ -660,6 +701,16 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 				/>
 			);
 		}
+		if (mode.kind === "attach") {
+			const attachTask = mode.task;
+			return (
+				<TextPrompt
+					label="Attach file (path, or drag a file onto the terminal)"
+					onSubmit={(v) => void attachFile(attachTask, v)}
+					onCancel={() => setMode({ kind: "detail", task: attachTask })}
+				/>
+			);
+		}
 		if (mode.kind === "search") {
 			return (
 				<TextPrompt
@@ -710,8 +761,7 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 	];
 	const footerHints: Hint[] =
 		focus === "sidebar" ? sidebarHints : grabbedId ? grabHints : browseHints;
-	const footerPrefix =
-		focus === "board" && grabbedId ? `moving ${grabbedId} · ` : null;
+	const footerPrefix = focus === "board" && grabbedId ? `moving ${grabbedId} · ` : null;
 
 	return (
 		<Box flexDirection="column" width={termCols}>
@@ -749,12 +799,7 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 					/>
 
 					{overlay ? (
-						<Box
-							height={boardHeight}
-							width={boardAreaWidth}
-							paddingX={1}
-							paddingY={1}
-						>
+						<Box height={boardHeight} width={boardAreaWidth} paddingX={1} paddingY={1}>
 							{overlay}
 						</Box>
 					) : mode.kind === "edit" ? (
@@ -798,6 +843,7 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 						>
 							<TaskDetail
 								task={mode.task}
+								canAttach={attachSupported}
 								onClose={() => setMode({ kind: "browse" })}
 								onEdit={() => {
 									if (mode.kind !== "detail") return;
@@ -808,6 +854,18 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 									const target = mode.task;
 									setMode({ kind: "browse" });
 									launchEditor(target);
+								}}
+								onAttach={() => {
+									if (mode.kind !== "detail") return;
+									setMode({ kind: "attach", task: mode.task });
+								}}
+								onOpenAttachment={(att) => {
+									if (mode.kind !== "detail") return;
+									void openAttachmentFor(mode.task, att);
+								}}
+								onRemoveAttachment={(att) => {
+									if (mode.kind !== "detail") return;
+									void removeAttachmentFor(mode.task, att);
 								}}
 								width={popupWidth}
 								height={popupHeight}
@@ -827,14 +885,10 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 
 			<Box paddingX={1} width={termCols} flexShrink={0}>
 				<Text wrap="wrap">
-					{footerPrefix ? (
-						<Text color={theme.textMuted}>{footerPrefix}</Text>
-					) : null}
+					{footerPrefix ? <Text color={theme.textMuted}>{footerPrefix}</Text> : null}
 					{footerHints.map((hint, idx) => (
 						<Text key={`${hint.keys}-${hint.label}`}>
-							{idx > 0 ? (
-								<Text color={theme.textFaint}>{"  ·  "}</Text>
-							) : null}
+							{idx > 0 ? <Text color={theme.textFaint}>{"  ·  "}</Text> : null}
 							<Text color={theme.textDim} bold>
 								{hint.keys}
 							</Text>

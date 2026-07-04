@@ -9,6 +9,7 @@ export interface AgentHookInfo {
 
 export interface UiCapabilities {
 	fetch: boolean;
+	attach: boolean;
 }
 
 export type UiConfig = OrdnaConfig & {

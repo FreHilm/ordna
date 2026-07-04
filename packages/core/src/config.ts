@@ -38,6 +38,17 @@ export const configSchema = z.object({
 			autoFetchIntervalMs: 60000,
 			autoRenumberOnConflict: true,
 		}),
+	// T-035: attachment tuning. `maxSizeMb` caps a single attachment's
+	// size — attachments land in git (working-tree files or blobs), so
+	// an accidental multi-GB drop would bloat the repo forever. Enforced
+	// in core (`addAttachment`) so CLI / TUI / web all respect it; the
+	// web server also pre-checks before buffering the upload. Set to 0
+	// to disable the limit entirely.
+	attachments: z
+		.object({
+			maxSizeMb: z.number().min(0).default(25),
+		})
+		.default({ maxSizeMb: 25 }),
 });
 
 export type OrdnaConfig = z.infer<typeof configSchema>;
@@ -71,11 +82,7 @@ export function loadConfig(options: LoadConfigOptions = {}): OrdnaConfig {
 	// this to pin storage without writing a file; tests use it to
 	// exercise specific modes without polluting the test directory.
 	const envStorage = process.env.ORDNA_STORAGE;
-	if (
-		envStorage === "file" ||
-		envStorage === "hybrid" ||
-		envStorage === "namespace"
-	) {
+	if (envStorage === "file" || envStorage === "hybrid" || envStorage === "namespace") {
 		merged.storage = envStorage;
 	}
 
