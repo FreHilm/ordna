@@ -26,6 +26,7 @@ import { startTransition, useCallback, useEffect, useMemo, useState } from "reac
 import { type AgentHookConfig, loadAgentHook, sendAgent } from "../agent.js";
 import { expandPath, openPath, resolveOpenablePath } from "../lib/attachment-utils.js";
 import { Column } from "./Column.js";
+import { FileViewer } from "./FileViewer.js";
 import { SelectPrompt } from "./SelectPrompt.js";
 import {
 	Sidebar,
@@ -50,6 +51,7 @@ type Mode =
 	| { kind: "assign"; task: Task }
 	| { kind: "move"; task: Task }
 	| { kind: "attach"; task: Task }
+	| { kind: "viewfile"; task: Task; att: Attachment }
 	| { kind: "search" };
 
 type Focus = "board" | "sidebar";
@@ -872,6 +874,33 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 								onRemoveAttachment={(att) => {
 									if (mode.kind !== "detail") return;
 									void removeAttachmentFor(mode.task, att);
+								}}
+								onViewAttachment={(att) => {
+									if (mode.kind !== "detail") return;
+									setMode({ kind: "viewfile", task: mode.task, att });
+								}}
+								width={popupWidth}
+								height={popupHeight}
+							/>
+						</Box>
+					) : mode.kind === "viewfile" ? (
+						<Box
+							height={boardHeight}
+							width={boardAreaWidth}
+							alignItems="center"
+							justifyContent="center"
+						>
+							<FileViewer
+								ctx={ctx}
+								task={mode.task}
+								att={mode.att}
+								onClose={() => {
+									if (mode.kind !== "viewfile") return;
+									setMode({ kind: "detail", task: mode.task });
+								}}
+								onOpenExternal={() => {
+									if (mode.kind !== "viewfile") return;
+									void openAttachmentFor(mode.task, mode.att);
 								}}
 								width={popupWidth}
 								height={popupHeight}

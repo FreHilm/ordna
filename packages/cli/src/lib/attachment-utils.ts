@@ -28,6 +28,63 @@ export function expandPath(input: string, cwd: string = process.cwd()): string {
 }
 
 /**
+ * Extensions the in-TUI file viewer treats as text. Deliberately broad —
+ * anything utf-8-ish renders fine in a terminal; truly binary formats
+ * (png, zip, pdf) are excluded and get the image path or the
+ * "open externally" fallback instead.
+ */
+const TEXT_EXTENSIONS = new Set([
+	"md",
+	"txt",
+	"html",
+	"htm",
+	"xml",
+	"json",
+	"js",
+	"jsx",
+	"ts",
+	"tsx",
+	"css",
+	"scss",
+	"yaml",
+	"yml",
+	"csv",
+	"toml",
+	"ini",
+	"conf",
+	"env",
+	"log",
+	"sh",
+	"zsh",
+	"bash",
+	"py",
+	"rb",
+	"go",
+	"rs",
+	"java",
+	"c",
+	"h",
+	"cpp",
+	"sql",
+	"svg",
+]);
+
+/** True if the in-TUI viewer should render this attachment as text. */
+export function isTextViewable(att: Attachment): boolean {
+	if (att.type?.startsWith("text/")) return true;
+	if (att.type === "application/json" || att.type === "image/svg+xml") return true;
+	const dot = att.name.lastIndexOf(".");
+	const ext = dot >= 0 ? att.name.slice(dot + 1).toLowerCase() : "";
+	return TEXT_EXTENSIONS.has(ext);
+}
+
+/** True if the in-TUI viewer should render this attachment as an image. */
+export function isImageViewable(att: Attachment): boolean {
+	// svg is xml — terminal-image (jimp) can't rasterize it; view as text.
+	return Boolean(att.type?.startsWith("image/")) && att.type !== "image/svg+xml";
+}
+
+/**
  * Resolve an attachment to a path that an OS file handler can open.
  *
  * - file / hybrid: the working-tree file already on disk (`src` is a

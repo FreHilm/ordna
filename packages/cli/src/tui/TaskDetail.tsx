@@ -14,6 +14,7 @@ interface Props {
 	onAttach?: () => void;
 	onOpenAttachment?: (att: Attachment) => void;
 	onRemoveAttachment?: (att: Attachment) => void;
+	onViewAttachment?: (att: Attachment) => void;
 	width: number;
 	height: number;
 }
@@ -53,6 +54,7 @@ export function TaskDetail({
 	onAttach,
 	onOpenAttachment,
 	onRemoveAttachment,
+	onViewAttachment,
 	width,
 	height,
 }: Props): React.JSX.Element {
@@ -153,6 +155,11 @@ export function TaskDetail({
 				setAttSel((s) => Math.min(atts.length - 1, s + 1));
 				return;
 			}
+			if (key.return && onViewAttachment) {
+				const att = atts[attSel];
+				if (att) onViewAttachment(att);
+				return;
+			}
 			if (input === "o" && onOpenAttachment) {
 				const att = atts[attSel];
 				if (att) onOpenAttachment(att);
@@ -186,6 +193,7 @@ export function TaskDetail({
 	const hints: string[] = [];
 	if (hasAtts) {
 		hints.push("↑/↓ files", "PgUp/Dn scroll");
+		if (onViewAttachment) hints.push("Enter view");
 		if (onOpenAttachment) hints.push("o open");
 		if (onRemoveAttachment) hints.push("d remove");
 	} else {
