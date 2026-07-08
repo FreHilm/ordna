@@ -45,7 +45,9 @@ import { theme } from "./theme.js";
 
 type Mode =
 	| { kind: "browse" }
-	| { kind: "detail"; task: Task }
+	// `focusAttId` restores the attachment selection when the detail view
+	// remounts after a round-trip through the file viewer.
+	| { kind: "detail"; task: Task; focusAttId?: string }
 	| { kind: "edit"; task: Task; returnTo: "browse" | "detail" }
 	| { kind: "create" }
 	| { kind: "assign"; task: Task }
@@ -303,7 +305,8 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 		const fresh = await getTask(id, ctx);
 		if (!fresh) return null;
 		setTasks((prev) => mergeTask(prev, fresh));
-		setMode((m) => (m.kind === "detail" && m.task.id === id ? { kind: "detail", task: fresh } : m));
+		// Spread keeps `focusAttId` (and any future detail-mode extras) intact.
+		setMode((m) => (m.kind === "detail" && m.task.id === id ? { ...m, task: fresh } : m));
 		return fresh;
 	};
 
@@ -851,6 +854,7 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 						>
 							<TaskDetail
 								task={mode.task}
+								initialAttachmentId={mode.focusAttId}
 								canAttach={attachSupported}
 								onClose={() => setMode({ kind: "browse" })}
 								onEdit={() => {
@@ -896,7 +900,8 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 								att={mode.att}
 								onClose={() => {
 									if (mode.kind !== "viewfile") return;
-									setMode({ kind: "detail", task: mode.task });
+									// Land back on the attachment we came from, not the top of the list.
+									setMode({ kind: "detail", task: mode.task, focusAttId: mode.att.id });
 								}}
 								onOpenExternal={() => {
 									if (mode.kind !== "viewfile") return;

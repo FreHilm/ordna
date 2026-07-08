@@ -1,12 +1,18 @@
 import type { Attachment, Task } from "@frehilm/ordna-core";
 import { Box, Text, useInput } from "ink";
 import type React from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { formatBytes } from "../lib/attachment-utils.js";
 import { colorForStatus, theme } from "./theme.js";
 
 interface Props {
 	task: Task;
+	/**
+	 * Attachment to pre-select on mount. Set when the detail view remounts
+	 * after a round-trip through the file viewer so the selection doesn't
+	 * jump back to the top of the list.
+	 */
+	initialAttachmentId?: string;
 	canAttach?: boolean;
 	onClose: () => void;
 	onEdit: () => void;
@@ -47,6 +53,7 @@ function wrapText(text: string, width: number): string[] {
 
 export function TaskDetail({
 	task,
+	initialAttachmentId,
 	canAttach,
 	onClose,
 	onEdit,
@@ -63,7 +70,14 @@ export function TaskDetail({
 	const hasDeps = task.depends_on.length > 0;
 	const atts = task.attachments;
 	const hasAtts = atts.length > 0;
-	const [attSel, setAttSel] = useState(0);
+	const [attSel, setAttSel] = useState(() =>
+		initialAttachmentId
+			? Math.max(
+					0,
+					atts.findIndex((a) => a.id === initialAttachmentId),
+				)
+			: 0,
+	);
 
 	const allLines = useMemo<Line[]>(() => {
 		const out: Line[] = [];
@@ -85,25 +99,33 @@ export function TaskDetail({
 		return out;
 	}, [task.sections, innerWidth]);
 
-	// Attachments render in a fixed window (header + up to 5 rows + an
-	// optional "+N more" line) so a task with many files can't crowd out
-	// the section text entirely.
-	const attVisible = hasAtts ? Math.min(atts.length, 5) : 0;
-	const attMore = Math.max(0, atts.length - attVisible);
-	const attBlockRows = hasAtts ? 1 + 1 + attVisible + (attMore > 0 ? 1 : 0) : 0;
-	let attStart = 0;
-	if (attSel >= attVisible) attStart = attSel - attVisible + 1;
-	attStart = Math.max(0, Math.min(attStart, Math.max(0, atts.length - attVisible)));
-	const visibleAtts = atts.slice(attStart, attStart + attVisible);
-
-	// Reserved layout rows inside the popup:
+	// Fixed chrome rows inside the popup (everything except the sections
+	// box and the attachment list):
 	//   2 border + 2 paddingY
 	//   1 title row + 1 marginTop above status + 1 status row
 	//   tags? + deps?
-	//   1 marginTop above sections + attachments block + 1 marginTop + 1 footer
-	const reservedRows =
-		2 + 2 + 1 + 1 + 1 + (hasTags ? 1 : 0) + (hasDeps ? 1 : 0) + 1 + attBlockRows + 1 + 1;
-	const sectionsHeight = Math.max(1, height - reservedRows);
+	//   1 marginTop above sections + 1 marginTop above footer + 1 footer
+	const chromeRows = 2 + 2 + 1 + 1 + 1 + (hasTags ? 1 : 0) + (hasDeps ? 1 : 0) + 1 + 1 + 1;
+	// Rows left to split between the sections box and the attachment block.
+	const available = Math.max(1, height - chromeRows);
+
+	// Attachment list: a height-aware window that always keeps the focused
+	// row visible. Sections keep a 3-row minimum; the list gets the rest
+	// (its own overhead is 1 marginTop + 1 header). When the list
+	// overflows, ↑/↓ indicator rows appear (blank-padded when their count
+	// is zero so the layout doesn't jump while scrolling) and the window
+	// slides with `attSel` — same pattern as the board columns.
+	const attListArea = hasAtts ? Math.max(3, available - 3 - 2) : 0;
+	const attNeedsScroll = hasAtts && atts.length > attListArea;
+	const attShown = hasAtts ? (attNeedsScroll ? Math.max(1, attListArea - 2) : atts.length) : 0;
+	const maxAttStart = Math.max(0, atts.length - attShown);
+	const attStart = Math.min(maxAttStart, attSel < attShown ? 0 : attSel - attShown + 1);
+	const visibleAtts = atts.slice(attStart, attStart + attShown);
+	const attAbove = attStart;
+	const attBelow = Math.max(0, atts.length - attStart - attShown);
+	const attBlockRows = hasAtts ? 2 + attShown + (attNeedsScroll ? 2 : 0) : 0;
+
+	const sectionsHeight = Math.max(1, available - attBlockRows);
 
 	const total = allLines.length;
 	const needsScroll = total > sectionsHeight;
@@ -112,7 +134,13 @@ export function TaskDetail({
 
 	const [scrollOffset, setScrollOffset] = useState(0);
 
+	// Reset scroll + selection only when the *task* changes — not on mount,
+	// where it would clobber the `initialAttachmentId` selection restored
+	// after a file-viewer round-trip.
+	const prevTaskId = useRef(task.id);
 	useEffect(() => {
+		if (prevTaskId.current === task.id) return;
+		prevTaskId.current = task.id;
 		setScrollOffset(0);
 		setAttSel(0);
 	}, [task.id]);
@@ -295,6 +323,11 @@ export function TaskDetail({
 					<Text color={theme.textDim} bold>
 						{`Attachments (${atts.length})`}
 					</Text>
+					{attNeedsScroll ? (
+						<Text color={theme.textMuted} italic wrap="truncate-end">
+							{attAbove > 0 ? `↑ ${attAbove} more` : " "}
+						</Text>
+					) : null}
 					{visibleAtts.map((att, i) => {
 						const idx = attStart + i;
 						const selected = idx === attSel;
@@ -306,9 +339,9 @@ export function TaskDetail({
 							</Text>
 						);
 					})}
-					{attMore > 0 ? (
-						<Text color={theme.textMuted} italic>
-							{`↓ ${attMore} more`}
+					{attNeedsScroll ? (
+						<Text color={theme.textMuted} italic wrap="truncate-end">
+							{attBelow > 0 ? `↓ ${attBelow} more` : " "}
 						</Text>
 					) : null}
 				</Box>
