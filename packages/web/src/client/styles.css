@@ -426,8 +426,7 @@ select {
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	padding: 12px 24px;
-	border-bottom: 1px solid var(--line);
+	padding: 12px 24px 0px 24px;
 	background: var(--bg);
 }
 .subbar h1 {
@@ -516,7 +515,7 @@ select {
 .board {
 	display: flex;
 	gap: 14px;
-	padding: 18px 24px;
+	padding: 12px 24px;
 	overflow-x: auto;
 	overflow-y: hidden;
 	flex: 1;
