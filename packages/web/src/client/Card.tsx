@@ -8,6 +8,7 @@ import { Avatar, Icon, tagColor } from "./icons.js";
 interface Props {
 	task: WireTask;
 	overlay?: boolean;
+	compact?: boolean;
 	onSelect?: (id: string) => void;
 	onEdit?: (id: string) => void;
 	onDelete?: (id: string) => void;
@@ -20,6 +21,7 @@ const CLICK_THRESHOLD_PX = 5;
 export function Card({
 	task,
 	overlay,
+	compact,
 	onSelect,
 	onEdit,
 	onDelete,
@@ -27,11 +29,18 @@ export function Card({
 	onAgent,
 }: Props): JSX.Element {
 	if (overlay) {
-		return <CardContent task={task} className="card overlay" />;
+		return (
+			<CardContent
+				task={task}
+				compact={compact}
+				className={`card overlay${compact ? " compact" : ""}`}
+			/>
+		);
 	}
 	return (
 		<DraggableCard
 			task={task}
+			compact={compact}
 			onSelect={onSelect}
 			onEdit={onEdit}
 			onDelete={onDelete}
@@ -43,6 +52,7 @@ export function Card({
 
 function DraggableCard({
 	task,
+	compact,
 	onSelect,
 	onEdit,
 	onDelete,
@@ -50,6 +60,7 @@ function DraggableCard({
 	onAgent,
 }: {
 	task: WireTask;
+	compact?: boolean;
 	onSelect?: (id: string) => void;
 	onEdit?: (id: string) => void;
 	onDelete?: (id: string) => void;
@@ -90,13 +101,12 @@ function DraggableCard({
 				if (dx < CLICK_THRESHOLD_PX && dy < CLICK_THRESHOLD_PX) onSelect(task.id);
 			}}
 		>
-			<CardContent task={task} className={`card ${isDragging ? "dragging" : ""}`} />
-			<div
-				className="card-actions"
-				onPointerDown={stop}
-				onPointerUp={stop}
-				onMouseDown={stop}
-			>
+			<CardContent
+				task={task}
+				compact={compact}
+				className={`card ${isDragging ? "dragging" : ""}${compact ? " compact" : ""}`}
+			/>
+			<div className="card-actions" onPointerDown={stop} onPointerUp={stop} onMouseDown={stop}>
 				{agentHook?.enabled ? (
 					<button
 						type="button"
@@ -140,7 +150,15 @@ function DraggableCard({
 	);
 }
 
-function CardContent({ task, className }: { task: WireTask; className: string }): JSX.Element {
+function CardContent({
+	task,
+	className,
+	compact,
+}: {
+	task: WireTask;
+	className: string;
+	compact?: boolean;
+}): JSX.Element {
 	const acStats = useMemo(() => {
 		const section = task.sections.find((s) => ACCEPTANCE_HEADING_RE.test(s.heading.trim()));
 		if (!section) return null;
@@ -150,23 +168,63 @@ function CardContent({ task, className }: { task: WireTask; className: string })
 		return { done, total: items.length };
 	}, [task]);
 
-	const hasBottom = Boolean(task.assignee || acStats);
+	// Compact mode moves progress to a vertical bar on the card's right
+	// edge (no numbers), so the bottom row only exists for the assignee.
+	const hasBottom = Boolean(task.assignee || (acStats && !compact));
 
 	return (
 		<div className={className}>
-			<div className="card-row">
-				<span className="card-id">{task.id}</span>
-				{task.priority ? (
-					<span className={`prio-badge ${task.priority}`}>{task.priority}</span>
-				) : null}
-				{task.depends_on.length > 0 ? (
-					<span className="card-deps">
-						<Icon.Link /> {task.depends_on.length}
+			{compact && acStats ? (
+				<div className="progress-vert" title={`${acStats.done}/${acStats.total} done`}>
+					<div
+						className="progress-vert-fill"
+						style={{ height: `${(acStats.done / acStats.total) * 100}%` }}
+					/>
+				</div>
+			) : null}
+			{compact ? (
+				// Compact header: id + title + deps + one-letter priority on a
+				// single row (full word in the hover tooltip). The id lives
+				// INSIDE the title span so wrapped lines flow back to the left
+				// edge instead of hanging indented under the title column.
+				<div className="card-head">
+					<span className="card-title">
+						<span className="card-id">{task.id}</span>
+						{task.title}
 					</span>
-				) : null}
-			</div>
-
-			<div className="card-title">{task.title}</div>
+					{task.depends_on.length > 0 ? (
+						<span className="card-deps">
+							<Icon.Link /> {task.depends_on.length}
+						</span>
+					) : null}
+					{task.priority ? (
+						<span
+							className={`prio-badge letter ${task.priority}`}
+							title={task.priority}
+							aria-label={`priority: ${task.priority}`}
+						>
+							{task.priority[0]?.toUpperCase()}
+						</span>
+					) : null}
+				</div>
+			) : (
+				// Comfortable header: the classic two-row layout — id row with
+				// the spelled-out priority badge, title beneath.
+				<>
+					<div className="card-row">
+						<span className="card-id">{task.id}</span>
+						{task.priority ? (
+							<span className={`prio-badge ${task.priority}`}>{task.priority}</span>
+						) : null}
+						{task.depends_on.length > 0 ? (
+							<span className="card-deps">
+								<Icon.Link /> {task.depends_on.length}
+							</span>
+						) : null}
+					</div>
+					<div className="card-title">{task.title}</div>
+				</>
+			)}
 
 			{task.tags.length > 0 ? (
 				<div className="card-tags">
@@ -186,11 +244,8 @@ function CardContent({ task, className }: { task: WireTask; className: string })
 							<span style={{ color: "var(--text-3)" }}>@{task.assignee}</span>
 						</span>
 					) : null}
-					{acStats ? (
-						<span
-							className="card-bottom-item card-bottom-end"
-							style={{ gap: 6 }}
-						>
+					{acStats && !compact ? (
+						<span className="card-bottom-item card-bottom-end" style={{ gap: 6 }}>
 							<div className="progress-track" style={{ width: 60 }}>
 								<div
 									className="progress-fill"

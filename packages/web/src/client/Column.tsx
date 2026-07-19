@@ -23,6 +23,7 @@ interface Props {
 	status: string;
 	color: string;
 	tasks: WireTask[];
+	compact?: boolean;
 	onSelect?: (id: string) => void;
 	onEdit?: (id: string) => void;
 	onDelete?: (id: string) => void;
@@ -34,6 +35,7 @@ export function Column({
 	status,
 	color,
 	tasks,
+	compact,
 	onSelect,
 	onEdit,
 	onDelete,
@@ -55,6 +57,7 @@ export function Column({
 					<Card
 						key={task.id}
 						task={task}
+						compact={compact}
 						onSelect={onSelect}
 						onEdit={onEdit}
 						onDelete={onDelete}

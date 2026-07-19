@@ -10,15 +10,15 @@ import {
 } from "@dnd-kit/core";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AgentHookInfo, UiConfig, WireTask, WsEvent } from "../shared/types.js";
-import { api } from "./api.js";
 import { Card } from "./Card.js";
 import { Cheatsheet } from "./Cheatsheet.js";
 import { Column, colorForStatus } from "./Column.js";
 import { CommandPalette, type PaletteAction } from "./CommandPalette.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
 import { CreateModal } from "./CreateModal.js";
-import { Icon } from "./icons.js";
 import { TaskModal } from "./TaskModal.js";
+import { api } from "./api.js";
+import { Icon } from "./icons.js";
 
 type Theme = "dark" | "light";
 type View =
@@ -43,6 +43,14 @@ function loadTheme(): Theme {
 	return "dark";
 }
 
+type Density = "comfortable" | "compact";
+
+function loadDensity(): Density {
+	const stored = window.localStorage.getItem("ordna-density");
+	if (stored === "compact" || stored === "comfortable") return stored;
+	return "comfortable";
+}
+
 export function App(): JSX.Element {
 	const [config, setConfig] = useState<UiConfig | null>(null);
 	const [tasks, setTasks] = useState<WireTask[]>([]);
@@ -54,6 +62,7 @@ export function App(): JSX.Element {
 	const [openInEdit, setOpenInEdit] = useState<boolean>(false);
 	const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 	const [theme, setTheme] = useState<Theme>(loadTheme);
+	const [density, setDensity] = useState<Density>(loadDensity);
 	const [view, setView] = useState<View>({ kind: "all" });
 	const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>(null);
 	const [paletteOpen, setPaletteOpen] = useState(false);
@@ -72,6 +81,15 @@ export function App(): JSX.Element {
 	}, [theme]);
 
 	useEffect(() => {
+		window.localStorage.setItem("ordna-density", density);
+	}, [density]);
+
+	const compact = density === "compact";
+	const toggleDensity = useCallback(() => {
+		setDensity((d) => (d === "compact" ? "comfortable" : "compact"));
+	}, []);
+
+	useEffect(() => {
 		void (async () => {
 			const [cfg, list] = await Promise.all([api.config(), api.list()]);
 			setConfig(cfg);
@@ -88,9 +106,7 @@ export function App(): JSX.Element {
 				if (evt.type === "removed") return prev.filter((t) => t.id !== evt.id);
 				if (evt.type === "renamed") {
 					// Drop the old-id entry and re-insert under newId.
-					const next = prev.filter(
-						(t) => t.id !== evt.oldId && t.id !== evt.newId,
-					);
+					const next = prev.filter((t) => t.id !== evt.oldId && t.id !== evt.newId);
 					next.push(evt.task);
 					return next;
 				}
@@ -117,24 +133,21 @@ export function App(): JSX.Element {
 		setTheme((t) => (t === "dark" ? "light" : "dark"));
 	}, []);
 
-	const createAt = useCallback(
-		async (status?: string) => {
-			if (!status) {
-				setShowCreate(true);
-				return;
-			}
-			try {
-				const t = await api.create({ title: "New task" });
-				setTasks((prev) => [...prev, t]);
-				setOpenTaskId(t.id);
-				setOpenInEdit(true);
-			} catch (e) {
-				setToast({ message: (e as Error).message, kind: "error" });
-				window.setTimeout(() => setToast(null), 4000);
-			}
-		},
-		[],
-	);
+	const createAt = useCallback(async (status?: string) => {
+		if (!status) {
+			setShowCreate(true);
+			return;
+		}
+		try {
+			const t = await api.create({ title: "New task" });
+			setTasks((prev) => [...prev, t]);
+			setOpenTaskId(t.id);
+			setOpenInEdit(true);
+		} catch (e) {
+			setToast({ message: (e as Error).message, kind: "error" });
+			window.setTimeout(() => setToast(null), 4000);
+		}
+	}, []);
 
 	const runFetch = useCallback(async () => {
 		if (isFetching) return;
@@ -261,10 +274,7 @@ export function App(): JSX.Element {
 	}, [tasks, view, priorityFilter, query]);
 
 	const boardStatuses = view.kind === "archived" ? [ARCHIVED_STATUS] : statuses;
-	const groups = useMemo(
-		() => groupBy(filtered, boardStatuses),
-		[filtered, boardStatuses],
-	);
+	const groups = useMemo(() => groupBy(filtered, boardStatuses), [filtered, boardStatuses]);
 	const tagList = useMemo(() => {
 		const counts = new Map<string, number>();
 		for (const t of tasks) for (const tag of t.tags) counts.set(tag, (counts.get(tag) ?? 0) + 1);
@@ -300,7 +310,7 @@ export function App(): JSX.Element {
 		}
 	};
 
-	const activeTask = activeId ? tasks.find((t) => t.id === activeId) ?? null : null;
+	const activeTask = activeId ? (tasks.find((t) => t.id === activeId) ?? null) : null;
 
 	const agentHook: AgentHookInfo | null = config?.agentHook ?? null;
 
@@ -330,10 +340,7 @@ export function App(): JSX.Element {
 		window.setTimeout(() => setToast(null), 2500);
 	};
 
-	const activeTasks = useMemo(
-		() => tasks.filter((t) => t.status !== ARCHIVED_STATUS),
-		[tasks],
-	);
+	const activeTasks = useMemo(() => tasks.filter((t) => t.status !== ARCHIVED_STATUS), [tasks]);
 	const archivedCount = tasks.length - activeTasks.length;
 	const statusCounts = useMemo(() => {
 		const c: Record<string, number> = {};
@@ -350,6 +357,12 @@ export function App(): JSX.Element {
 			hint: "T",
 			icon: theme === "dark" ? "Sun" : "Moon",
 			run: toggleTheme,
+		},
+		{
+			id: "density",
+			label: compact ? "Comfortable cards" : "Compact cards",
+			icon: compact ? "Expand" : "Compress",
+			run: toggleDensity,
 		},
 		{
 			id: "shortcuts",
@@ -401,6 +414,14 @@ export function App(): JSX.Element {
 				<button
 					type="button"
 					className="btn-icon"
+					title={compact ? "Comfortable cards" : "Compact cards"}
+					onClick={toggleDensity}
+				>
+					{compact ? <Icon.Expand /> : <Icon.Compress />}
+				</button>
+				<button
+					type="button"
+					className="btn-icon"
 					title={theme === "dark" ? "Switch to light (T)" : "Switch to dark (T)"}
 					onClick={toggleTheme}
 				>
@@ -417,11 +438,7 @@ export function App(): JSX.Element {
 						<Icon.Refresh />
 					</button>
 				) : null}
-				<button
-					type="button"
-					className="btn btn-primary"
-					onClick={() => setShowCreate(true)}
-				>
+				<button type="button" className="btn btn-primary" onClick={() => setShowCreate(true)}>
 					<Icon.Plus /> New task <span className="kbd">N</span>
 				</button>
 			</div>
@@ -496,7 +513,10 @@ export function App(): JSX.Element {
 							className={`side-item ${priorityFilter === p ? "active" : ""}`}
 							onClick={() => setPriorityFilter((cur) => (cur === p ? null : p))}
 						>
-							<span className={`side-dot col-dot`} style={{ background: `var(--prio-${p === "medium" ? "med" : p})` }} />
+							<span
+								className={`side-dot col-dot`}
+								style={{ background: `var(--prio-${p === "medium" ? "med" : p})` }}
+							/>
 							{p}
 							<span className="count">{tasks.filter((t) => t.priority === p).length}</span>
 						</button>
@@ -537,11 +557,7 @@ export function App(): JSX.Element {
 						</span>
 						<div className="subbar-spacer" />
 						{priorityFilter ? (
-							<button
-								type="button"
-								className="pill active"
-								onClick={() => setPriorityFilter(null)}
-							>
+							<button type="button" className="pill active" onClick={() => setPriorityFilter(null)}>
 								<span className={`prio-dot ${priorityFilter}`} /> {priorityFilter}
 								<Icon.X />
 							</button>
@@ -556,6 +572,7 @@ export function App(): JSX.Element {
 									status={status}
 									color={view.kind === "archived" ? "slate" : colorForStatus(status, idx)}
 									tasks={groups[status] ?? []}
+									compact={compact}
 									onSelect={(id) => {
 										setOpenTaskId(id);
 										setOpenInEdit(false);
@@ -571,7 +588,7 @@ export function App(): JSX.Element {
 							))}
 						</div>
 						<DragOverlay dropAnimation={null}>
-							{activeTask ? <Card task={activeTask} overlay /> : null}
+							{activeTask ? <Card task={activeTask} overlay compact={compact} /> : null}
 						</DragOverlay>
 					</DndContext>
 				</div>
@@ -595,9 +612,7 @@ export function App(): JSX.Element {
 									setOpenInEdit(false);
 								}}
 								onSaved={(updated) => {
-									setTasks((prev) =>
-										prev.map((t) => (t.id === updated.id ? updated : t)),
-									);
+									setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
 								}}
 								onDelete={(id) => {
 									setOpenTaskId(null);

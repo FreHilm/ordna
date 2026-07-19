@@ -116,6 +116,18 @@ export const Icon = {
 			<path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
 		</svg>
 	),
+	Compress: (p: IconProps) => (
+		<svg width="15" height="15" viewBox="0 0 24 24" {...base} {...p}>
+			<path d="m7 20 5-5 5 5" />
+			<path d="m7 4 5 5 5-5" />
+		</svg>
+	),
+	Expand: (p: IconProps) => (
+		<svg width="15" height="15" viewBox="0 0 24 24" {...base} {...p}>
+			<path d="m7 15 5 5 5-5" />
+			<path d="m7 9 5-5 5 5" />
+		</svg>
+	),
 } as const;
 
 const AVATAR_HUES: Record<string, number> = {
@@ -144,9 +156,7 @@ export function Avatar({ name, size = 18 }: { name?: string | null; size?: numbe
 		);
 	}
 	const key = name.toLowerCase();
-	const hue =
-		AVATAR_HUES[key] ??
-		([...name].reduce((a, c) => a + c.charCodeAt(0), 0) * 11) % 360;
+	const hue = AVATAR_HUES[key] ?? ([...name].reduce((a, c) => a + c.charCodeAt(0), 0) * 11) % 360;
 	return (
 		<span
 			className="avatar"

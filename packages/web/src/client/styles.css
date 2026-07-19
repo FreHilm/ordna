@@ -417,26 +417,42 @@ select {
 
 /* ---------- Board area ---------- */
 .boardwrap {
+	position: relative;
 	display: flex;
 	flex-direction: column;
 	min-height: 0;
 }
 
+/* Board title: a floating pill in the bottom-right corner of the board
+   (both densities) — the columns get the full height. Translucent +
+   blurred so cards scrolling underneath stay legible. */
 .subbar {
+	position: absolute;
+	bottom: 12px;
+	right: 20px;
+	z-index: 6;
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	padding: 12px 24px 0px 24px;
-	background: var(--bg);
+	padding: 4px 12px;
+	background: color-mix(in srgb, var(--bg-1) 78%, transparent);
+	backdrop-filter: blur(8px);
+	-webkit-backdrop-filter: blur(8px);
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	box-shadow: var(--shadow-sm);
 }
 .subbar h1 {
-	font-size: 18px;
+	font-size: 12.5px;
 	font-weight: 600;
 	letter-spacing: -0.015em;
 }
 .subbar .meta {
 	color: var(--text-3);
-	font-size: 13px;
+	font-size: 11.5px;
+}
+.subbar .subbar-spacer {
+	display: none;
 }
 
 .search {
@@ -630,11 +646,40 @@ select {
 	cursor: grabbing;
 }
 
+/* Comfortable header: id row, title beneath (the classic layout). */
 .card-row {
 	display: flex;
 	align-items: center;
 	gap: 8px;
 	margin-bottom: 2px;
+}
+/* Compact header: id + title + badges on one baseline-aligned row. */
+.card-head {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	margin-bottom: 2px;
+}
+/* Title flows inline after the id; badges sit on the first line.
+   The id is an inline child of the title so wrapped lines return to
+   the card's left edge (no hanging indent under the id column). */
+.card-head .card-title {
+	flex: 1;
+	min-width: 0;
+	margin-bottom: 0;
+	font-size: 12px;
+}
+.card-head .card-id {
+	margin-right: 8px;
+}
+/* Deps + priority share one height and pin to the row top, so their
+   vertical centers line up with each other on the title's first line
+   (baseline alignment would seat them differently — the deps' text
+   baseline vs the letter's baseline inside the circle). */
+.card-head .card-deps,
+.card-head .prio-badge.letter {
+	align-self: flex-start;
+	height: 18px;
 }
 .card-id {
 	font-family: var(--mono);
@@ -669,6 +714,19 @@ select {
 .prio-badge.low {
 	background: rgba(59, 130, 246, 0.12);
 	color: var(--prio-low);
+}
+/* Compact one-letter variant (H / M / L) used on the card head row.
+   The full word appears as a native tooltip via the title attribute.
+   No align-self override: the row's baseline alignment pins the badge
+   to the title's FIRST line (next to the deps indicator) instead of
+   letting it float vertically centered beside wrapped titles. */
+.prio-badge.letter {
+	width: 18px;
+	padding: 0;
+	justify-content: center;
+	border-radius: 50%;
+	flex: none;
+	cursor: default;
 }
 
 .card-deps {
@@ -706,26 +764,29 @@ select {
 	background: var(--bg-2);
 	color: var(--text-2);
 }
+/* Tag hues are deliberately muted: the color is a hint, not a badge —
+   text blends roughly half toward the neutral gray and the background
+   tint stays faint so a row of chips doesn't shout. */
 .chip.violet {
-	background: rgba(139, 92, 246, 0.12);
-	color: var(--violet);
+	background: rgba(139, 92, 246, 0.07);
+	color: color-mix(in srgb, var(--violet) 55%, var(--text-2));
 }
 .chip.blue {
-	background: rgba(59, 130, 246, 0.12);
-	color: var(--blue);
+	background: rgba(59, 130, 246, 0.07);
+	color: color-mix(in srgb, var(--blue) 55%, var(--text-2));
 }
 .chip.green {
-	background: rgba(16, 185, 129, 0.12);
-	color: var(--green);
+	background: rgba(16, 185, 129, 0.07);
+	color: color-mix(in srgb, var(--green) 55%, var(--text-2));
 }
 .chip.amber {
-	background: rgba(245, 158, 11, 0.14);
-	color: var(--accent);
+	background: rgba(245, 158, 11, 0.08);
+	color: color-mix(in srgb, var(--accent) 55%, var(--text-2));
 }
 .chip.dep {
 	font-family: var(--mono);
-	background: rgba(59, 130, 246, 0.12);
-	color: var(--blue);
+	background: rgba(59, 130, 246, 0.07);
+	color: color-mix(in srgb, var(--blue) 55%, var(--text-2));
 }
 
 .card-bottom {
@@ -747,6 +808,49 @@ select {
 }
 .card-bottom-end {
 	margin-left: auto;
+}
+
+/* ---- compact card density ---- */
+/* Extra right padding clears the vertical progress bar on the edge. */
+.card.compact {
+	padding-right: 16px;
+}
+.card.compact .card-head {
+	margin-bottom: 0;
+}
+.card.compact .card-tags {
+	margin: 2px 0 2px;
+}
+.card.compact .chip {
+	height: 17px;
+	padding: 0 6px;
+	font-size: 10px;
+}
+.card.compact .card-bottom {
+	padding-top: 4px;
+	border-top: none;
+}
+
+/* Acceptance progress as a slim vertical bar hugging the card's right
+   edge — fills bottom-up; the exact count lives in the hover tooltip. */
+.progress-vert {
+	position: absolute;
+	top: 5px;
+	right: 5px;
+	bottom: 5px;
+	width: 4px;
+	background: var(--bg-3);
+	border-radius: 3px;
+	overflow: hidden;
+}
+.progress-vert-fill {
+	position: absolute;
+	bottom: 0;
+	left: 0;
+	width: 100%;
+	background: var(--accent);
+	border-radius: 3px;
+	transition: height 0.3s;
 }
 
 .progress-track {
