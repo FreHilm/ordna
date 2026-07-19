@@ -2,13 +2,10 @@ import { spawn } from "node:child_process";
 import { join } from "node:path";
 import chokidar, { type FSWatcher } from "chokidar";
 import type { OrdnaConfig } from "../../config.js";
-import type {
-	Task,
-	TaskCreateInput,
-	TaskUpdateInput,
-} from "../../schema.js";
+import type { Task, TaskCreateInput, TaskUpdateInput } from "../../schema.js";
 import type { TaskEventListener } from "../../watcher.js";
-import { type Backend, type ListOptions, isKnownStatus } from "../backend.js";
+import { FileAttachmentStore, removeAttachmentsDir } from "../attachments.js";
+import { type AttachmentStore, type Backend, type ListOptions, isKnownStatus } from "../backend.js";
 import {
 	deleteTaskFile,
 	ensureTasksDir,
@@ -18,12 +15,7 @@ import {
 	readTaskBytes,
 	writeTaskBytes,
 } from "../file-io.js";
-import {
-	defaultSectionsFor,
-	parseTask,
-	parseTaskFile,
-	serializeTask,
-} from "../markdown.js";
+import { defaultSectionsFor, parseTask, parseTaskFile, serializeTask } from "../markdown.js";
 
 function today(): string {
 	return new Date().toISOString().slice(0, 10);
@@ -40,6 +32,7 @@ function today(): string {
  */
 export class FileBackend implements Backend {
 	readonly kind = "file";
+	readonly attachments: AttachmentStore;
 
 	#initPromise: Promise<void> | null = null;
 	readonly #activeWatchers = new Set<FSWatcher>();
@@ -48,7 +41,9 @@ export class FileBackend implements Backend {
 		private readonly cwd: string,
 		private readonly config: OrdnaConfig,
 		private readonly tasksDir: string,
-	) {}
+	) {
+		this.attachments = new FileAttachmentStore(tasksDir, config);
+	}
 
 	async init(): Promise<void> {
 		ensureTasksDir(this.tasksDir);
@@ -79,18 +74,14 @@ export class FileBackend implements Backend {
 		}
 
 		let filtered = tasks;
-		if (options.status)
-			filtered = filtered.filter((t) => t.status === options.status);
-		if (options.assignee)
-			filtered = filtered.filter((t) => t.assignee === options.assignee);
+		if (options.status) filtered = filtered.filter((t) => t.status === options.status);
+		if (options.assignee) filtered = filtered.filter((t) => t.assignee === options.assignee);
 		if (options.tag) {
 			const tag = options.tag;
 			filtered = filtered.filter((t) => t.tags.includes(tag));
 		}
 
-		filtered.sort((a, b) =>
-			a.id.localeCompare(b.id, undefined, { numeric: true }),
-		);
+		filtered.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
 		return filtered;
 	}
 
@@ -120,18 +111,14 @@ export class FileBackend implements Backend {
 			depends_on: input.depends_on ?? [],
 			created_at: now,
 			updated_at: now,
+			attachments: [],
 			sections: defaultSectionsFor(this.config.schema),
 			extra_frontmatter: {},
 			filePath: "",
 			rawContent: "",
 		};
 
-		const filename = filenameFor(
-			id,
-			task.title,
-			this.config.schema,
-			this.config,
-		);
+		const filename = filenameFor(id, task.title, this.config.schema, this.config);
 		task.filePath = join(this.tasksDir, filename);
 		const serialized = serializeTask(task, this.config.schema);
 		task.rawContent = serialized;
@@ -149,20 +136,15 @@ export class FileBackend implements Backend {
 			...existing,
 			title: patch.title ?? existing.title,
 			status: patch.status ?? existing.status,
-			assignee:
-				patch.assignee !== undefined ? patch.assignee : existing.assignee,
-			priority:
-				patch.priority !== undefined ? patch.priority : existing.priority,
+			assignee: patch.assignee !== undefined ? patch.assignee : existing.assignee,
+			priority: patch.priority !== undefined ? patch.priority : existing.priority,
 			tags: patch.tags ?? existing.tags,
 			depends_on: patch.depends_on ?? existing.depends_on,
 			sections: patch.sections ?? existing.sections,
 			updated_at: today(),
 		};
 
-		if (
-			next.status !== existing.status &&
-			!isKnownStatus(this.config, next.status)
-		) {
+		if (next.status !== existing.status && !isKnownStatus(this.config, next.status)) {
 			throw new Error(`Status "${next.status}" is not in configured statuses.`);
 		}
 
@@ -186,6 +168,8 @@ export class FileBackend implements Backend {
 			throw new Error(`Task ${id} has no filePath; cannot delete in file mode.`);
 		}
 		await deleteTaskFile(task.filePath);
+		// Don't orphan the task's attachment bytes on disk.
+		await removeAttachmentsDir(this.tasksDir, id);
 	}
 
 	watch(listener: TaskEventListener): () => Promise<void> {
@@ -196,10 +180,7 @@ export class FileBackend implements Backend {
 		});
 		this.#activeWatchers.add(watcher);
 
-		const emitIfMarkdown = async (
-			type: "added" | "changed",
-			filePath: string,
-		): Promise<void> => {
+		const emitIfMarkdown = async (type: "added" | "changed", filePath: string): Promise<void> => {
 			if (!filePath.endsWith(".md")) return;
 			try {
 				const task = await parseTaskFile(filePath);
@@ -226,12 +207,7 @@ export class FileBackend implements Backend {
 		await this.#ensureInit();
 		const tasksDirArg = this.config.tasksDir;
 		await runGit(this.cwd, ["add", "--", tasksDirArg]);
-		const status = await runGit(this.cwd, [
-			"status",
-			"--porcelain",
-			"--",
-			tasksDirArg,
-		]);
+		const status = await runGit(this.cwd, ["status", "--porcelain", "--", tasksDirArg]);
 		if (status.stdout.trim().length === 0) {
 			throw new Error("No task changes to commit.");
 		}
@@ -239,10 +215,7 @@ export class FileBackend implements Backend {
 	}
 }
 
-function runGit(
-	cwd: string,
-	args: string[],
-): Promise<{ stdout: string; stderr: string }> {
+function runGit(cwd: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
 	return new Promise((resolve, reject) => {
 		const proc = spawn("git", args, { cwd });
 		let stdout = "";
@@ -256,11 +229,7 @@ function runGit(
 		proc.on("error", reject);
 		proc.on("close", (code) => {
 			if (code === 0) resolve({ stdout, stderr });
-			else
-				reject(
-					new Error(`git ${args.join(" ")} failed (${code}): ${stderr.trim()}`),
-				);
+			else reject(new Error(`git ${args.join(" ")} failed (${code}): ${stderr.trim()}`));
 		});
 	});
 }
-

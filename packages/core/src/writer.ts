@@ -30,6 +30,20 @@ function buildFrontmatter(task: Task, mode: SchemaMode): Record<string, unknown>
 		base.updated_at = task.updated_at;
 	}
 
+	// Attachments are ordna-namespaced metadata with no Backlog.md
+	// analogue; written in both schema modes (harmless extra frontmatter
+	// in backlog files). Omitted entirely when empty to keep files clean.
+	if (task.attachments.length > 0) {
+		base.attachments = task.attachments.map((a) => ({
+			id: a.id,
+			name: a.name,
+			type: a.type,
+			size: a.size,
+			added: a.added,
+			src: a.src,
+		}));
+	}
+
 	for (const [key, value] of Object.entries(task.extra_frontmatter)) {
 		if (!(key in base)) base[key] = value;
 	}

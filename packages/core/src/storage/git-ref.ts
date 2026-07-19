@@ -46,9 +46,7 @@ export class GitRunner {
 					resolve(stdout);
 				} else {
 					reject(
-						new Error(
-							`git ${args.join(" ")} failed (${code}): ${stderr.trim() || "(no stderr)"}`,
-						),
+						new Error(`git ${args.join(" ")} failed (${code}): ${stderr.trim() || "(no stderr)"}`),
 					);
 				}
 			});
@@ -98,17 +96,64 @@ export class GitRunner {
 	}
 
 	/**
+	 * Like `run`, but collects stdout as raw bytes instead of decoding
+	 * to utf-8. Used for binary attachment blobs, where `toString("utf8")`
+	 * would corrupt the content.
+	 */
+	runBuffer(args: string[], stdin?: Buffer): Promise<Buffer> {
+		return new Promise((resolve, reject) => {
+			const proc = spawn("git", args, { cwd: this.cwd });
+			const chunks: Buffer[] = [];
+			let stderr = "";
+			proc.stdout.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+			proc.stderr.on("data", (chunk) => {
+				stderr += chunk.toString("utf8");
+			});
+			proc.on("error", (err) => {
+				const e = err as NodeJS.ErrnoException;
+				if (e.code === "ENOENT") {
+					reject(
+						new Error(
+							"ordna: `git` binary not found on PATH. Install git to use hybrid or namespace storage.",
+						),
+					);
+					return;
+				}
+				reject(err);
+			});
+			proc.on("close", (code) => {
+				if (code === 0) {
+					resolve(Buffer.concat(chunks));
+				} else {
+					reject(
+						new Error(`git ${args.join(" ")} failed (${code}): ${stderr.trim() || "(no stderr)"}`),
+					);
+				}
+			});
+			if (stdin !== undefined) {
+				proc.stdin.write(stdin);
+			}
+			proc.stdin.end();
+		});
+	}
+
+	/** Write a blob from raw bytes. Returns the resulting object ID. */
+	async hashObjectBuffer(bytes: Buffer): Promise<string> {
+		const out = await this.runBuffer(["hash-object", "-w", "--stdin"], bytes);
+		return out.toString("utf8").trim();
+	}
+
+	/** Read a blob's contents as raw bytes. */
+	async catBlobBuffer(oid: string): Promise<Buffer> {
+		return this.runBuffer(["cat-file", "blob", oid]);
+	}
+
+	/**
 	 * List refs matching a pattern. Returns `{refname, oid}` per ref,
 	 * sorted in git's natural order.
 	 */
-	async forEachRef(
-		pattern: string,
-	): Promise<Array<{ refname: string; oid: string }>> {
-		const out = await this.run([
-			"for-each-ref",
-			"--format=%(objectname) %(refname)",
-			pattern,
-		]);
+	async forEachRef(pattern: string): Promise<Array<{ refname: string; oid: string }>> {
+		const out = await this.run(["for-each-ref", "--format=%(objectname) %(refname)", pattern]);
 		const lines = out.split("\n").filter((l) => l.length > 0);
 		const result: Array<{ refname: string; oid: string }> = [];
 		for (const line of lines) {
@@ -129,11 +174,7 @@ export class GitRunner {
 	 *  - `expectedOld === <oid>` → require the ref to currently equal that oid
 	 *  - `expectedOld === undefined` → unconditional update
 	 */
-	async updateRef(
-		refname: string,
-		newOid: string,
-		expectedOld?: string,
-	): Promise<void> {
+	async updateRef(refname: string, newOid: string, expectedOld?: string): Promise<void> {
 		const args = ["update-ref", refname, newOid];
 		if (expectedOld !== undefined) args.push(expectedOld);
 		await this.run(args);

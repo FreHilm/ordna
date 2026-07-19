@@ -1,6 +1,7 @@
-import { Command } from "commander";
 import type { Priority } from "@frehilm/ordna-core";
+import { Command } from "commander";
 import { runAssign } from "./commands/assign.js";
+import { runAttach, runAttachments, runDetach } from "./commands/attach.js";
 import { runCommit } from "./commands/commit.js";
 import { runCreate } from "./commands/create.js";
 import { runInit } from "./commands/init.js";
@@ -27,9 +28,7 @@ export function buildProgram(): Command {
 		)
 		.action(async (opts: { storage?: string }) => {
 			const storage =
-				opts.storage === "file" ||
-				opts.storage === "hybrid" ||
-				opts.storage === "namespace"
+				opts.storage === "file" || opts.storage === "hybrid" || opts.storage === "namespace"
 					? opts.storage
 					: undefined;
 			if (opts.storage && !storage) {
@@ -83,6 +82,21 @@ export function buildProgram(): Command {
 		.command("assign <id> [name]")
 		.description("Assign a task (omit name to unassign)")
 		.action((id: string, name?: string) => runAssign(id, name));
+
+	program
+		.command("attach <id> <file>")
+		.description("Attach a file to a task")
+		.action((id: string, file: string) => runAttach(id, file));
+
+	program
+		.command("attachments <id>")
+		.description("List a task's attachments")
+		.action((id: string) => runAttachments(id));
+
+	program
+		.command("detach <id> <attachmentId>")
+		.description("Remove an attachment from a task (e.g. a1)")
+		.action((id: string, attachmentId: string) => runDetach(id, attachmentId));
 
 	program
 		.command("commit")

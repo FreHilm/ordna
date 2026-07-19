@@ -1,14 +1,13 @@
 import { join } from "node:path";
 import chokidar, { type FSWatcher } from "chokidar";
 import type { OrdnaConfig } from "../../config.js";
-import type {
-	Task,
-	TaskCreateInput,
-	TaskUpdateInput,
-} from "../../schema.js";
+import type { Task, TaskCreateInput, TaskUpdateInput } from "../../schema.js";
 import type { TaskEventListener } from "../../watcher.js";
+import { FileAttachmentStore, removeAttachmentsDir } from "../attachments.js";
+import { PushQueue } from "../auto-push.js";
 import {
 	ARCHIVED_STATUS,
+	type AttachmentStore,
 	type Backend,
 	type ListOptions,
 	isKnownStatus,
@@ -21,13 +20,7 @@ import {
 	writeTaskBytes,
 } from "../file-io.js";
 import { GitRunner } from "../git-ref.js";
-import {
-	defaultSectionsFor,
-	parseTask,
-	parseTaskFile,
-	serializeTask,
-} from "../markdown.js";
-import { PushQueue } from "../auto-push.js";
+import { defaultSectionsFor, parseTask, parseTaskFile, serializeTask } from "../markdown.js";
 import { type Op, SyncRef } from "../sync-ref.js";
 
 const SYNC_REF_NAME = "refs/ordna/state";
@@ -60,6 +53,7 @@ function nowIso(): string {
  */
 export class HybridBackend implements Backend {
 	readonly kind = "hybrid";
+	readonly attachments: AttachmentStore;
 
 	#initPromise: Promise<void> | null = null;
 	readonly #activeWatchers = new Set<FSWatcher>();
@@ -74,17 +68,14 @@ export class HybridBackend implements Backend {
 		private readonly tasksDir: string,
 	) {
 		this.#git = new GitRunner(cwd);
+		this.attachments = new FileAttachmentStore(tasksDir, config);
 	}
 
 	async init(): Promise<void> {
 		await this.#git.ensureRepository();
 		ensureTasksDir(this.tasksDir);
 		this.#sync = new SyncRef(this.#git, SYNC_REF_NAME);
-		this.#pushQueue = new PushQueue(
-			this.#git,
-			SYNC_PUSH_REFSPEC,
-			"ordna-hybrid",
-		);
+		this.#pushQueue = new PushQueue(this.#git, SYNC_PUSH_REFSPEC, "ordna-hybrid");
 	}
 
 	async #ensureInit(): Promise<void> {
@@ -119,17 +110,13 @@ export class HybridBackend implements Backend {
 		}
 
 		let filtered = tasks;
-		if (options.status)
-			filtered = filtered.filter((t) => t.status === options.status);
-		if (options.assignee)
-			filtered = filtered.filter((t) => t.assignee === options.assignee);
+		if (options.status) filtered = filtered.filter((t) => t.status === options.status);
+		if (options.assignee) filtered = filtered.filter((t) => t.assignee === options.assignee);
 		if (options.tag) {
 			const tag = options.tag;
 			filtered = filtered.filter((t) => t.tags.includes(tag));
 		}
-		filtered.sort((a, b) =>
-			a.id.localeCompare(b.id, undefined, { numeric: true }),
-		);
+		filtered.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
 		return filtered;
 	}
 
@@ -166,18 +153,14 @@ export class HybridBackend implements Backend {
 			depends_on: input.depends_on ?? [],
 			created_at: now,
 			updated_at: now,
+			attachments: [],
 			sections: defaultSectionsFor(this.config.schema),
 			extra_frontmatter: {},
 			filePath: "",
 			rawContent: "",
 		};
 
-		const filename = filenameFor(
-			id,
-			task.title,
-			this.config.schema,
-			this.config,
-		);
+		const filename = filenameFor(id, task.title, this.config.schema, this.config);
 		task.filePath = join(this.tasksDir, filename);
 		const serialized = serializeTask(task, this.config.schema);
 		task.rawContent = serialized;
@@ -200,19 +183,14 @@ export class HybridBackend implements Backend {
 			...existing,
 			title: patch.title ?? existing.title,
 			status: patch.status ?? existing.status,
-			assignee:
-				patch.assignee !== undefined ? patch.assignee : existing.assignee,
-			priority:
-				patch.priority !== undefined ? patch.priority : existing.priority,
+			assignee: patch.assignee !== undefined ? patch.assignee : existing.assignee,
+			priority: patch.priority !== undefined ? patch.priority : existing.priority,
 			tags: patch.tags ?? existing.tags,
 			depends_on: patch.depends_on ?? existing.depends_on,
 			sections: patch.sections ?? existing.sections,
 			updated_at: today(),
 		};
-		if (
-			next.status !== existing.status &&
-			!isKnownStatus(this.config, next.status)
-		) {
+		if (next.status !== existing.status && !isKnownStatus(this.config, next.status)) {
 			throw new Error(`Status "${next.status}" is not in configured statuses.`);
 		}
 
@@ -227,8 +205,7 @@ export class HybridBackend implements Backend {
 		// its own op kind; everything else is a generic update. Richer
 		// classification (move via status, changed-field lists) is
 		// deferred to the follow-up that adds op-specific fields.
-		const opKind: Op["op"] =
-			patch.status === ARCHIVED_STATUS ? "archive" : "update";
+		const opKind: Op["op"] = patch.status === ARCHIVED_STATUS ? "archive" : "update";
 		await sync.appendOp(await this.#buildOp(opKind, id));
 		pushQueue.schedule();
 		return next;
@@ -245,6 +222,8 @@ export class HybridBackend implements Backend {
 			throw new Error(`Task ${id} has no filePath; cannot delete in hybrid mode.`);
 		}
 		await deleteTaskFile(task.filePath);
+		// Don't orphan the task's attachment bytes on disk.
+		await removeAttachmentsDir(this.tasksDir, id);
 
 		await sync.appendOp(await this.#buildOp("delete", id));
 		pushQueue.schedule();
@@ -263,10 +242,7 @@ export class HybridBackend implements Backend {
 		});
 		this.#activeWatchers.add(watcher);
 
-		const emitIfMarkdown = async (
-			type: "added" | "changed",
-			filePath: string,
-		): Promise<void> => {
+		const emitIfMarkdown = async (type: "added" | "changed", filePath: string): Promise<void> => {
 			if (!filePath.endsWith(".md")) return;
 			try {
 				const task = await parseTaskFile(filePath);
@@ -295,12 +271,7 @@ export class HybridBackend implements Backend {
 		await this.#ensureInit();
 		const tasksDirArg = this.config.tasksDir;
 		await this.#git.run(["add", "--", tasksDirArg]);
-		const status = await this.#git.run([
-			"status",
-			"--porcelain",
-			"--",
-			tasksDirArg,
-		]);
+		const status = await this.#git.run(["status", "--porcelain", "--", tasksDirArg]);
 		if (status.trim().length === 0) {
 			throw new Error("No task changes to commit.");
 		}

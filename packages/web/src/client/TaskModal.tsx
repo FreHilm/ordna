@@ -1,27 +1,34 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type DragEvent as ReactDragEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentHookInfo, OrdnaConfig, WireTask } from "../shared/types.js";
+import { AcceptanceList } from "./AcceptanceList.js";
+import { AcceptanceView } from "./AcceptanceView.js";
+import { ConfirmDialog } from "./ConfirmDialog.js";
+import { TagInput } from "./TagInput.js";
 import {
 	ACCEPTANCE_HEADING_RE,
 	type AcceptanceItem,
 	parseAcceptance,
 	serializeAcceptance,
 } from "./acceptance.js";
-import { AcceptanceList } from "./AcceptanceList.js";
-import { AcceptanceView } from "./AcceptanceView.js";
 import { api } from "./api.js";
-import { ConfirmDialog } from "./ConfirmDialog.js";
 import { Avatar, Icon, tagColor } from "./icons.js";
-import { TagInput } from "./TagInput.js";
 
 interface Props {
 	task: WireTask;
 	config: OrdnaConfig;
 	startInEdit?: boolean;
+	canAttach?: boolean;
 	onClose: () => void;
 	onSaved: (task: WireTask) => void;
 	onDelete: (id: string) => void;
 	agentHook?: AgentHookInfo | null;
 	onAgent?: (id: string) => void;
+}
+
+function formatBytes(n: number): string {
+	if (n < 1024) return `${n} B`;
+	if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+	return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 type Priority = "high" | "medium" | "low";
@@ -108,6 +115,7 @@ export function TaskModal({
 	task,
 	config,
 	startInEdit,
+	canAttach,
 	onClose,
 	onSaved,
 	onDelete,
@@ -119,6 +127,12 @@ export function TaskModal({
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [pendingExit, setPendingExit] = useState<null | "close" | "exit-edit">(null);
+	const [dragging, setDragging] = useState(false);
+	const [uploading, setUploading] = useState(false);
+	// Counts dragenter/leave so dragging over child elements doesn't flicker
+	// the dropzone highlight off.
+	const dragDepth = useRef(0);
+	const fileInputRef = useRef<HTMLInputElement>(null);
 	// Tracks whether this modal session was opened directly into edit mode
 	// (e.g. via the card's Edit button). Save / Cancel close the modal in that
 	// case; otherwise they fall back to view mode.
@@ -195,6 +209,57 @@ export function TaskModal({
 		}
 	};
 
+	const uploadFiles = async (files: File[]): Promise<void> => {
+		if (files.length === 0) return;
+		setUploading(true);
+		setError(null);
+		try {
+			let latest: WireTask | null = null;
+			// Sequential so the attachments list (and id allocation) stays
+			// consistent — each upload reads the prior frontmatter.
+			for (const file of files) {
+				latest = await api.uploadAttachment(task.id, file);
+			}
+			if (latest) onSaved(latest);
+		} catch (e) {
+			setError((e as Error).message);
+		} finally {
+			setUploading(false);
+		}
+	};
+
+	const onDrop = (e: ReactDragEvent): void => {
+		e.preventDefault();
+		dragDepth.current = 0;
+		setDragging(false);
+		if (!canAttach) return;
+		const files = Array.from(e.dataTransfer.files ?? []);
+		void uploadFiles(files);
+	};
+
+	const onDragEnter = (e: ReactDragEvent): void => {
+		if (!canAttach) return;
+		if (!Array.from(e.dataTransfer.types ?? []).includes("Files")) return;
+		dragDepth.current += 1;
+		setDragging(true);
+	};
+
+	const onDragLeave = (): void => {
+		if (!canAttach) return;
+		dragDepth.current = Math.max(0, dragDepth.current - 1);
+		if (dragDepth.current === 0) setDragging(false);
+	};
+
+	const removeAttachment = async (attId: string): Promise<void> => {
+		setError(null);
+		try {
+			const updated = await api.deleteAttachment(task.id, attId);
+			onSaved(updated);
+		} catch (e) {
+			setError((e as Error).message);
+		}
+	};
+
 	const quickToggleAc = async (id: string, checked: boolean): Promise<void> => {
 		const section = task.sections.find((s) => isAcceptance(s.heading));
 		if (!section) return;
@@ -221,7 +286,22 @@ export function TaskModal({
 
 	return (
 		<div className="scrim" onClick={requestClose}>
-			<div className="modal" onClick={(e) => e.stopPropagation()}>
+			<div
+				className={`modal${dragging ? " modal-dragging" : ""}`}
+				onClick={(e) => e.stopPropagation()}
+				onDrop={onDrop}
+				onDragOver={(e) => {
+					if (canAttach) e.preventDefault();
+				}}
+				onDragEnter={onDragEnter}
+				onDragLeave={onDragLeave}
+			>
+				{dragging ? (
+					<div className="modal-drop-overlay">
+						<Icon.Paperclip />
+						<span>Drop to attach</span>
+					</div>
+				) : null}
 				<div className="modal-head">
 					<span className="modal-id">{task.id}</span>
 					<span className="modal-sublabel">
@@ -321,14 +401,10 @@ export function TaskModal({
 								draft.acceptanceSectionIdx !== null ? (
 									<AcceptanceList
 										items={draft.acceptance}
-										onChange={(next) =>
-											setDraft((d) => ({ ...d, acceptance: next }))
-										}
+										onChange={(next) => setDraft((d) => ({ ...d, acceptance: next }))}
 									/>
 								) : (
-									<div className="section-empty">
-										No Acceptance Criteria section in this task.
-									</div>
+									<div className="section-empty">No Acceptance Criteria section in this task.</div>
 								)
 							) : (
 								<AcceptanceView items={viewAcceptance} onToggle={quickToggleAc} />
@@ -369,6 +445,70 @@ export function TaskModal({
 										)}
 									</div>
 								))}
+
+						{canAttach ? (
+							<div className="section">
+								<span className="section-label">Attachments</span>
+								{task.attachments.length > 0 ? (
+									<div className="attachments">
+										{task.attachments.map((att) => {
+											const url = api.attachmentUrl(task.id, att.id);
+											const isImage = (att.type ?? "").startsWith("image/");
+											return (
+												<div key={att.id} className="attachment">
+													<a
+														className="attachment-preview"
+														href={url}
+														target="_blank"
+														rel="noreferrer"
+														title={`Open ${att.name}`}
+													>
+														{isImage ? <img src={url} alt={att.name} /> : <Icon.File />}
+													</a>
+													<div className="attachment-meta">
+														<span className="attachment-name" title={att.name}>
+															{att.name}
+														</span>
+														<span className="attachment-size">{formatBytes(att.size)}</span>
+													</div>
+													<a className="btn-icon" href={url} download={att.name} title="Download">
+														<Icon.Download />
+													</a>
+													<button
+														type="button"
+														className="btn-icon btn-danger"
+														title="Remove attachment"
+														onClick={() => void removeAttachment(att.id)}
+													>
+														<Icon.X />
+													</button>
+												</div>
+											);
+										})}
+									</div>
+								) : null}
+								<button
+									type="button"
+									className={`dropzone${dragging ? " active" : ""}`}
+									onClick={() => fileInputRef.current?.click()}
+									disabled={uploading}
+								>
+									<Icon.Paperclip />
+									<span>{uploading ? "Uploading…" : "Drop files here or click to attach"}</span>
+								</button>
+								<input
+									ref={fileInputRef}
+									type="file"
+									multiple
+									hidden
+									onChange={(e) => {
+										const files = Array.from(e.target.files ?? []);
+										e.target.value = "";
+										void uploadFiles(files);
+									}}
+								/>
+							</div>
+						) : null}
 					</div>
 
 					<div className="side-panel">
@@ -379,9 +519,7 @@ export function TaskModal({
 									<select
 										className="select"
 										value={draft.status}
-										onChange={(e) =>
-											setDraft((d) => ({ ...d, status: e.target.value }))
-										}
+										onChange={(e) => setDraft((d) => ({ ...d, status: e.target.value }))}
 									>
 										{config.statuses.map((s) => (
 											<option key={s} value={s}>
@@ -445,9 +583,7 @@ export function TaskModal({
 								<input
 									className="input"
 									value={draft.assignee}
-									onChange={(e) =>
-										setDraft((d) => ({ ...d, assignee: e.target.value }))
-									}
+									onChange={(e) => setDraft((d) => ({ ...d, assignee: e.target.value }))}
 									placeholder="unassigned"
 								/>
 							) : (
@@ -469,9 +605,7 @@ export function TaskModal({
 								<TagInput
 									id="tf-depends-on"
 									values={draft.depends_on}
-									onChange={(next) =>
-										setDraft((d) => ({ ...d, depends_on: next }))
-									}
+									onChange={(next) => setDraft((d) => ({ ...d, depends_on: next }))}
 									placeholder="e.g. T-001"
 									chipClassName="chip dep"
 								/>

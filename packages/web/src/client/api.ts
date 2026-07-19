@@ -46,4 +46,18 @@ export const api = {
 		),
 	fetchRemote: (): Promise<FetchResponse> =>
 		fetch("/api/fetch", { method: "POST" }).then((r) => json<FetchResponse>(r)),
+	uploadAttachment: (id: string, file: File): Promise<WireTask> => {
+		const form = new FormData();
+		form.append("file", file);
+		return fetch(`/api/tasks/${encodeURIComponent(id)}/attachments`, {
+			method: "POST",
+			body: form,
+		}).then((r) => json<WireTask>(r));
+	},
+	deleteAttachment: (id: string, attId: string): Promise<WireTask> =>
+		fetch(`/api/tasks/${encodeURIComponent(id)}/attachments/${encodeURIComponent(attId)}`, {
+			method: "DELETE",
+		}).then((r) => json<WireTask>(r)),
+	attachmentUrl: (id: string, attId: string): string =>
+		`/api/tasks/${encodeURIComponent(id)}/attachments/${encodeURIComponent(attId)}`,
 };

@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import matter from "gray-matter";
 import {
 	type AcceptanceItem,
+	type Attachment,
 	BODY_HEADING_ALIASES,
 	FRONTMATTER_ALIASES,
 	type Priority,
@@ -11,10 +12,7 @@ import {
 	frontmatterSchema,
 } from "./schema.js";
 
-function pickAlias<T>(
-	frontmatter: Record<string, unknown>,
-	canonical: string,
-): T | undefined {
+function pickAlias<T>(frontmatter: Record<string, unknown>, canonical: string): T | undefined {
 	const aliases = FRONTMATTER_ALIASES[canonical] ?? [canonical];
 	for (const key of aliases) {
 		if (key in frontmatter && frontmatter[key] !== undefined && frontmatter[key] !== null) {
@@ -48,6 +46,32 @@ function normalizePriority(value: unknown): Priority | null {
 function normalizeStringArray(value: unknown): string[] {
 	if (!Array.isArray(value)) return [];
 	return value.filter((v): v is string => typeof v === "string");
+}
+
+/**
+ * Normalize the `attachments` frontmatter array into the canonical
+ * `Attachment[]`. Tolerant: drops malformed entries (no `id`/`src`
+ * means there's nothing actionable), defaults missing optional fields.
+ * Returns `[]` for absent or non-array input.
+ */
+function normalizeAttachments(value: unknown): Attachment[] {
+	if (!Array.isArray(value)) return [];
+	const out: Attachment[] = [];
+	for (const entry of value) {
+		if (typeof entry !== "object" || entry === null) continue;
+		const e = entry as Record<string, unknown>;
+		if (typeof e.id !== "string" || typeof e.src !== "string") continue;
+		out.push({
+			id: e.id,
+			name: typeof e.name === "string" ? e.name : e.id,
+			type: typeof e.type === "string" ? e.type : null,
+			size: typeof e.size === "number" ? e.size : 0,
+			// `added` may arrive as a Date (gray-matter coercion) or string.
+			added: normalizeDate(e.added),
+			src: e.src,
+		});
+	}
+	return out;
 }
 
 export function splitSections(body: string): Section[] {
@@ -127,6 +151,7 @@ export function parseTask(raw: string, filePath: string): Task {
 		depends_on: normalizeStringArray(pickAlias(frontmatter, "depends_on")),
 		created_at: normalizeDate(pickAlias(frontmatter, "created_at")),
 		updated_at: normalizeDate(pickAlias(frontmatter, "updated_at")),
+		attachments: normalizeAttachments(frontmatter.attachments),
 		sections,
 		extra_frontmatter: collectExtraFrontmatter(frontmatter),
 		filePath,

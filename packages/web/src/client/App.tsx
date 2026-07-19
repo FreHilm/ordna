@@ -610,6 +610,7 @@ export function App(): JSX.Element {
 								task={open}
 								config={config}
 								startInEdit={openInEdit}
+								canAttach={config.capabilities?.attach ?? false}
 								onClose={() => {
 									setOpenTaskId(null);
 									setOpenInEdit(false);

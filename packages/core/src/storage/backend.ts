@@ -1,9 +1,5 @@
 import type { OrdnaConfig } from "../config.js";
-import type {
-	Task,
-	TaskCreateInput,
-	TaskUpdateInput,
-} from "../schema.js";
+import type { Attachment, Task, TaskCreateInput, TaskUpdateInput } from "../schema.js";
 import type { TaskEventListener } from "../watcher.js";
 
 /**
@@ -82,6 +78,19 @@ export interface Backend {
 	commit?(message?: string): Promise<void>;
 
 	/**
+	 * Attachment storage capability. Optional and capability-detected
+	 * exactly like `commit?` / `fetch?`: consumers gate the UI on
+	 * `typeof ctx.backend.attachments === "object"`. Present on file,
+	 * hybrid, and namespace; future remote providers add their own.
+	 *
+	 * The bytes live wherever the backend decides (working-tree files,
+	 * git blobs, a remote API); the canonical metadata always
+	 * round-trips through the task's frontmatter `attachments` list,
+	 * which `add` / `remove` keep in sync.
+	 */
+	attachments?: AttachmentStore;
+
+	/**
 	 * Pull remote updates into the backend's storage. Only namespace
 	 * implements this in v1 — file mode has nothing to fetch, and
 	 * hybrid's task content rides regular `git pull` on branches while
@@ -100,4 +109,29 @@ export interface Backend {
 export interface FetchResult {
 	refsUpdated: number;
 	durationMs: number;
+}
+
+/** Input for adding an attachment: the raw bytes plus display metadata. */
+export interface AttachmentInput {
+	/** Filename used as the display label and download name. */
+	name: string;
+	/** Media type (MIME). Omit/null to let the store infer from `name`. */
+	type?: string | null;
+	/** The file contents. */
+	bytes: Buffer;
+}
+
+/**
+ * Per-backend attachment storage. Each method also keeps the owning
+ * task's frontmatter `attachments` list in sync, so a subsequent
+ * `get(taskId)` reflects the change.
+ *
+ * `read` returns the bytes alongside the canonical `Attachment` record.
+ * It throws if the task or attachment id is unknown; callers that want
+ * a soft path should pre-check `task.attachments`.
+ */
+export interface AttachmentStore {
+	add(taskId: string, input: AttachmentInput): Promise<Attachment>;
+	read(taskId: string, attId: string): Promise<{ meta: Attachment; bytes: Buffer }>;
+	remove(taskId: string, attId: string): Promise<void>;
 }

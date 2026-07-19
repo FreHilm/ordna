@@ -1,29 +1,29 @@
 import type { OrdnaConfig } from "../../config.js";
 import { parseId } from "../../ids.js";
-import type {
-	Task,
-	TaskCreateInput,
-	TaskUpdateInput,
-} from "../../schema.js";
+import type { Attachment, Task, TaskCreateInput, TaskUpdateInput } from "../../schema.js";
 import type { TaskEvent, TaskEventListener } from "../../watcher.js";
+import { inferMediaType, nextAttachmentId, sanitizeFilename } from "../attachments.js";
 import {
 	ARCHIVED_STATUS,
+	type AttachmentInput,
+	type AttachmentStore,
 	type Backend,
 	type FetchResult,
 	type ListOptions,
 	isKnownStatus,
 } from "../backend.js";
 import { GitRunner } from "../git-ref.js";
-import {
-	defaultSectionsFor,
-	parseTaskBytes,
-	serializeTask,
-} from "../markdown.js";
+import { defaultSectionsFor, parseTaskBytes, serializeTask } from "../markdown.js";
 import { type Op, SyncRef } from "../sync-ref.js";
 
 const REF_PREFIX = "refs/ordna/tasks/";
 const TASK_REF_PATTERN = `${REF_PREFIX}*`;
 const NAMESPACE_FETCH_REFSPEC = `+${REF_PREFIX}*:${REF_PREFIX}*`;
+// Attachment blobs are anchored by one ref each at
+// refs/ordna/attachments/<taskId>/<attId> so they survive `git gc` and
+// ride the same push/fetch path as tasks.
+const ATT_REF_PREFIX = "refs/ordna/attachments/";
+const ATT_FETCH_REFSPEC = `+${ATT_REF_PREFIX}*:${ATT_REF_PREFIX}*`;
 const STATE_REF_NAME = "refs/ordna/state";
 const STATE_PUSH_REFSPEC = `+${STATE_REF_NAME}:${STATE_REF_NAME}`;
 const STATE_FETCH_REFSPEC = `+${STATE_REF_NAME}:${STATE_REF_NAME}`;
@@ -47,6 +47,15 @@ function idFromRefname(refname: string): string | null {
 	if (!refname.startsWith(REF_PREFIX)) return null;
 	const id = refname.slice(REF_PREFIX.length);
 	return id.length > 0 ? id : null;
+}
+
+function attRefnameFor(taskId: string, attId: string): string {
+	return `${ATT_REF_PREFIX}${taskId}/${attId}`;
+}
+
+/** Strip the `git:` scheme from an attachment `src` to get the blob oid. */
+function oidFromSrc(src: string): string {
+	return src.startsWith("git:") ? src.slice("git:".length) : src;
 }
 
 function isCASConflict(err: unknown): boolean {
@@ -132,6 +141,7 @@ interface PendingPush {
  */
 export class NamespaceBackend implements Backend {
 	readonly kind = "namespace";
+	readonly attachments: AttachmentStore;
 
 	#initPromise: Promise<void> | null = null;
 	readonly #git: GitRunner;
@@ -167,8 +177,12 @@ export class NamespaceBackend implements Backend {
 		this.#git = new GitRunner(cwd);
 		this.#pollIntervalMs = config.namespace?.pollIntervalMs ?? 1000;
 		this.#autoFetchIntervalMs = config.namespace?.autoFetchIntervalMs ?? 60000;
-		this.#autoRenumberOnConflict =
-			config.namespace?.autoRenumberOnConflict ?? true;
+		this.#autoRenumberOnConflict = config.namespace?.autoRenumberOnConflict ?? true;
+		this.attachments = {
+			add: (taskId, input) => this.#attachmentAdd(taskId, input),
+			read: (taskId, attId) => this.#attachmentRead(taskId, attId),
+			remove: (taskId, attId) => this.#attachmentRemove(taskId, attId),
+		};
 	}
 
 	async init(): Promise<void> {
@@ -259,17 +273,13 @@ export class NamespaceBackend implements Backend {
 		}
 
 		let filtered = tasks;
-		if (options.status)
-			filtered = filtered.filter((t) => t.status === options.status);
-		if (options.assignee)
-			filtered = filtered.filter((t) => t.assignee === options.assignee);
+		if (options.status) filtered = filtered.filter((t) => t.status === options.status);
+		if (options.assignee) filtered = filtered.filter((t) => t.assignee === options.assignee);
 		if (options.tag) {
 			const tag = options.tag;
 			filtered = filtered.filter((t) => t.tags.includes(tag));
 		}
-		filtered.sort((a, b) =>
-			a.id.localeCompare(b.id, undefined, { numeric: true }),
-		);
+		filtered.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
 		return filtered;
 	}
 
@@ -318,6 +328,7 @@ export class NamespaceBackend implements Backend {
 			depends_on: input.depends_on ?? [],
 			created_at: now,
 			updated_at: now,
+			attachments: [],
 			sections: defaultSectionsFor(this.config.schema),
 			extra_frontmatter: {},
 			rawContent: "",
@@ -374,19 +385,14 @@ export class NamespaceBackend implements Backend {
 			...existing,
 			title: patch.title ?? existing.title,
 			status: patch.status ?? existing.status,
-			assignee:
-				patch.assignee !== undefined ? patch.assignee : existing.assignee,
-			priority:
-				patch.priority !== undefined ? patch.priority : existing.priority,
+			assignee: patch.assignee !== undefined ? patch.assignee : existing.assignee,
+			priority: patch.priority !== undefined ? patch.priority : existing.priority,
 			tags: patch.tags ?? existing.tags,
 			depends_on: patch.depends_on ?? existing.depends_on,
 			sections: patch.sections ?? existing.sections,
 			updated_at: today(),
 		};
-		if (
-			next.status !== existing.status &&
-			!isKnownStatus(this.config, next.status)
-		) {
+		if (next.status !== existing.status && !isKnownStatus(this.config, next.status)) {
 			throw new Error(`Status "${next.status}" is not in configured statuses.`);
 		}
 
@@ -406,8 +412,7 @@ export class NamespaceBackend implements Backend {
 
 		// Light op classification: archive transitions get their own kind;
 		// everything else is a generic update. Mirrors hybrid.
-		const opKind: Op["op"] =
-			patch.status === ARCHIVED_STATUS ? "archive" : "update";
+		const opKind: Op["op"] = patch.status === ARCHIVED_STATUS ? "archive" : "update";
 		await sync.appendOp(await this.#buildOp(opKind, id));
 		this.#schedulePush({
 			refname,
@@ -441,6 +446,20 @@ export class NamespaceBackend implements Backend {
 
 		await sync.appendOp(await this.#buildOp("delete", id));
 
+		// Don't orphan the task's attachment anchor refs — without this
+		// the blobs stay pinned (GC-immune) locally and on origin forever.
+		// Collected before the remote block so the delete-pushes below can
+		// cover them too. Best-effort per ref: a ref that moved underneath
+		// us is skipped rather than blocking the task delete.
+		const attRefs = await this.#git.forEachRef(`${ATT_REF_PREFIX}${id}/*`);
+		for (const att of attRefs) {
+			try {
+				await this.#git.deleteRef(att.refname, att.oid);
+			} catch {
+				// moved / already gone — skip
+			}
+		}
+
 		// Delete-push with lease so we don't clobber an in-flight remote
 		// update. Soft-fail like the other push paths — the local delete
 		// has already happened; a rejection just means the remote has
@@ -456,9 +475,22 @@ export class NamespaceBackend implements Backend {
 				]);
 			} catch (err) {
 				const msg = err instanceof Error ? err.message : String(err);
-				console.error(
-					`[ordna-namespace] delete-push for ${refname} failed: ${msg}`,
-				);
+				console.error(`[ordna-namespace] delete-push for ${refname} failed: ${msg}`);
+			}
+			for (const att of attRefs) {
+				try {
+					await this.#git.run([
+						"push",
+						`--force-with-lease=${att.refname}:${att.oid}`,
+						"origin",
+						`:${att.refname}`,
+					]);
+				} catch (err) {
+					const msg = err instanceof Error ? err.message : String(err);
+					console.error(
+						`[ordna-namespace] attachment delete-push for ${att.refname} failed: ${msg}`,
+					);
+				}
 			}
 		}
 		this.#schedulePushState();
@@ -510,6 +542,11 @@ export class NamespaceBackend implements Backend {
 		// on origin (mixed-version teams); ignore that failure.
 		await this.#git.fetchRefspec(NAMESPACE_FETCH_REFSPEC);
 		try {
+			await this.#git.fetchRefspec(ATT_FETCH_REFSPEC);
+		} catch {
+			// no attachment refs on origin yet — fine
+		}
+		try {
 			await this.#git.fetchRefspec(STATE_FETCH_REFSPEC);
 		} catch {
 			// remote doesn't have the state ref yet — fine
@@ -518,6 +555,150 @@ export class NamespaceBackend implements Backend {
 		const after = await this.#snapshotRefs();
 		const changed = this.#countRefDiff(before, after);
 		return { refsUpdated: changed, durationMs: Date.now() - start };
+	}
+
+	// ---------------- attachments ----------------
+
+	async #attachmentAdd(taskId: string, input: AttachmentInput): Promise<Attachment> {
+		await this.#ensureInit();
+		const existing = await this.get(taskId);
+		if (!existing) throw new Error(`Task ${taskId} not found.`);
+
+		const id = nextAttachmentId(existing.attachments);
+		const name = sanitizeFilename(input.name);
+
+		// Write the bytes as a blob and anchor it with a ref so `git gc`
+		// can't prune it. The ref name is unique (attId is max+1), so the
+		// empty-expected CAS asserts a genuine create.
+		const oid = await this.#git.hashObjectBuffer(input.bytes);
+		const attRef = attRefnameFor(taskId, id);
+		await this.#git.updateRef(attRef, oid, "");
+
+		const att: Attachment = {
+			id,
+			name,
+			type: input.type ?? inferMediaType(name),
+			size: input.bytes.byteLength,
+			added: today(),
+			src: `git:${oid}`,
+		};
+
+		await this.#mutateAttachments(taskId, (atts) => [...atts, att]);
+
+		// Push the anchor ref alongside the task blob. isCreate:false keeps
+		// it off the renumber path — blobs are content-addressed, so a
+		// same-name collision means identical bytes (harmless).
+		this.#schedulePush({
+			refname: attRef,
+			newOid: oid,
+			expectedOld: "",
+			isCreate: false,
+		});
+		return att;
+	}
+
+	async #attachmentRead(
+		taskId: string,
+		attId: string,
+	): Promise<{ meta: Attachment; bytes: Buffer }> {
+		await this.#ensureInit();
+		const task = await this.get(taskId);
+		if (!task) throw new Error(`Task ${taskId} not found.`);
+		const meta = task.attachments.find((a) => a.id === attId);
+		if (!meta) {
+			throw new Error(`Attachment ${attId} not found on ${taskId}.`);
+		}
+		const bytes = await this.#git.catBlobBuffer(oidFromSrc(meta.src));
+		return { meta, bytes };
+	}
+
+	async #attachmentRemove(taskId: string, attId: string): Promise<void> {
+		await this.#ensureInit();
+		const task = await this.get(taskId);
+		if (!task) throw new Error(`Task ${taskId} not found.`);
+		const meta = task.attachments.find((a) => a.id === attId);
+		if (!meta) {
+			throw new Error(`Attachment ${attId} not found on ${taskId}.`);
+		}
+
+		// Drop the anchor ref (best-effort) so the blob becomes
+		// GC-eligible, then update the task registry.
+		const attRef = attRefnameFor(taskId, attId);
+		const refs = await this.#git.forEachRef(attRef);
+		const entry = refs.find((r) => r.refname === attRef);
+		if (entry) {
+			try {
+				await this.#git.deleteRef(attRef, entry.oid);
+			} catch {
+				// ref moved/gone — the registry removal below is what matters
+			}
+		}
+
+		await this.#mutateAttachments(taskId, (atts) => atts.filter((a) => a.id !== attId));
+
+		// Mirror task-delete: best-effort delete-push of the anchor ref.
+		await this.#checkRemote();
+		if (this.#remoteExists && entry) {
+			try {
+				await this.#git.run([
+					"push",
+					`--force-with-lease=${attRef}:${entry.oid}`,
+					"origin",
+					`:${attRef}`,
+				]);
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : String(err);
+				console.error(`[ordna-namespace] attachment delete-push for ${attRef} failed: ${msg}`);
+			}
+		}
+	}
+
+	/**
+	 * CAS-rewrite a task blob with a transformed `attachments` list.
+	 * Same read-modify-write-with-lease shape as `update()`; appends an
+	 * audit op and schedules the task + state pushes.
+	 */
+	async #mutateAttachments(
+		taskId: string,
+		transform: (atts: Attachment[]) => Attachment[],
+	): Promise<void> {
+		const sync = this.#sync as SyncRef;
+		const refname = refnameFor(taskId);
+		const refs = await this.#git.forEachRef(refname);
+		const entry = refs.find((r) => r.refname === refname);
+		if (!entry) throw new Error(`Task ${taskId} not found.`);
+		const currentOid = entry.oid;
+
+		const raw = await this.#git.catBlob(currentOid);
+		const task = parseTaskBytes(raw, `ref:${refname}`);
+		delete task.filePath;
+
+		const next: Task = {
+			...task,
+			attachments: transform(task.attachments),
+			updated_at: today(),
+		};
+		const serialized = serializeTask(next, this.config.schema);
+		const newOid = await this.#git.hashObject(serialized);
+		try {
+			await this.#git.updateRef(refname, newOid, currentOid);
+		} catch (err) {
+			if (isCASConflict(err)) {
+				throw new Error(
+					`ordna: ${taskId} moved underneath us while updating attachments; pull (\`git fetch origin '+${refname}:${refname}'\`) and retry.`,
+				);
+			}
+			throw err;
+		}
+
+		await sync.appendOp(await this.#buildOp("update", taskId));
+		this.#schedulePush({
+			refname,
+			newOid,
+			expectedOld: currentOid,
+			isCreate: false,
+		});
+		this.#schedulePushState();
 	}
 
 	// ---------------- internals: push pipeline ----------------
@@ -607,17 +788,11 @@ export class NamespaceBackend implements Backend {
 
 	async #pushTaskRef(push: PendingPush): Promise<void> {
 		try {
-			await this.#git.pushRefWithLease(
-				push.refname,
-				push.newOid,
-				push.expectedOld,
-			);
+			await this.#git.pushRefWithLease(push.refname, push.newOid, push.expectedOld);
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
 			if (!isPushRejection(err)) {
-				console.error(
-					`[ordna-namespace] push failed for ${push.refname}: ${msg}`,
-				);
+				console.error(`[ordna-namespace] push failed for ${push.refname}: ${msg}`);
 				return;
 			}
 			if (push.isCreate && this.#autoRenumberOnConflict) {
@@ -727,16 +902,11 @@ export class NamespaceBackend implements Backend {
 			this.#emit({ type: "renamed", oldId, newId, task: renamed });
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
-			console.error(
-				`[ordna-namespace] reconcile failed for ${push.refname}: ${msg}`,
-			);
+			console.error(`[ordna-namespace] reconcile failed for ${push.refname}: ${msg}`);
 		}
 	}
 
-	async #cascadeDependsOnRewrite(
-		oldId: string,
-		newId: string,
-	): Promise<void> {
+	async #cascadeDependsOnRewrite(oldId: string, newId: string): Promise<void> {
 		const refs = await this.#git.forEachRef(TASK_REF_PATTERN);
 		for (const { refname, oid } of refs) {
 			const id = idFromRefname(refname);
@@ -748,9 +918,7 @@ export class NamespaceBackend implements Backend {
 				if (!task.depends_on.includes(oldId)) continue;
 				const next: Task = {
 					...task,
-					depends_on: task.depends_on.map((d) =>
-						d === oldId ? newId : d,
-					),
+					depends_on: task.depends_on.map((d) => (d === oldId ? newId : d)),
 					updated_at: today(),
 				};
 				const serialized = serializeTask(next, this.config.schema);
@@ -905,10 +1073,7 @@ export class NamespaceBackend implements Backend {
 		}
 	}
 
-	async #diffAndEmit(
-		prev: Map<string, string>,
-		next: Map<string, string>,
-	): Promise<void> {
+	async #diffAndEmit(prev: Map<string, string>, next: Map<string, string>): Promise<void> {
 		for (const [refname, oid] of next) {
 			if (!prev.has(refname)) {
 				const task = await this.#parseRef(refname, oid);
@@ -962,10 +1127,7 @@ export class NamespaceBackend implements Backend {
 		return map;
 	}
 
-	#countRefDiff(
-		prev: Map<string, string>,
-		next: Map<string, string>,
-	): number {
+	#countRefDiff(prev: Map<string, string>, next: Map<string, string>): number {
 		let changed = 0;
 		for (const [refname, oid] of next) {
 			if (prev.get(refname) !== oid) changed++;

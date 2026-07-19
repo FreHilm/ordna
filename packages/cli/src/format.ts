@@ -36,6 +36,10 @@ export function formatTask(task: Task): string {
 	if (task.tags.length > 0) lines.push(`  tags: ${task.tags.map((t) => c.cyan(t)).join(", ")}`);
 	if (task.depends_on.length > 0)
 		lines.push(`  depends_on: ${task.depends_on.map((d) => c.blue(d)).join(", ")}`);
+	if (task.attachments.length > 0)
+		lines.push(
+			`  attachments: ${task.attachments.map((a) => `${c.cyan(a.id)} ${a.name}`).join(", ")}`,
+		);
 	lines.push(c.dim(`  created_at: ${task.created_at}   updated_at: ${task.updated_at}`));
 	lines.push("");
 	for (const section of task.sections) {

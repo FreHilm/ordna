@@ -15,6 +15,36 @@ export interface Section {
 	content: string;
 }
 
+/**
+ * A file attached to a task.
+ *
+ * The record is backend-agnostic: it's the canonical registry entry
+ * that round-trips through the task's frontmatter. The bytes live
+ * wherever the active storage backend puts them — `src` is the
+ * backend's **opaque** locator and must never be interpreted by UI
+ * code. To get bytes, go through `Backend.attachments?.read()`.
+ *
+ *  - file / hybrid backends: `src` is a path relative to `tasksDir`
+ *    (e.g. `attachments/T-001/a1-chart.png`), committed to git
+ *  - namespace backend: `src` is `git:<blob-oid>`, anchored by a
+ *    `refs/ordna/attachments/<taskId>/<attId>` ref
+ *  - remote backends (future): `src` is the provider URL
+ */
+export interface Attachment {
+	/** Stable id, unique within the task (e.g. `a1`). Never derived from the filename. */
+	id: string;
+	/** Original filename — used as the display label and download name. */
+	name: string;
+	/** Best-effort media type (MIME), or null when it can't be inferred. */
+	type: string | null;
+	/** Size in bytes. */
+	size: number;
+	/** Date added, `YYYY-MM-DD`. */
+	added: string;
+	/** Opaque backend locator. Only the backend that wrote it may interpret it. */
+	src: string;
+}
+
 export interface Task {
 	id: string;
 	title: string;
@@ -25,6 +55,13 @@ export interface Task {
 	depends_on: string[];
 	created_at: string;
 	updated_at: string;
+	/**
+	 * Files attached to the task. The canonical registry — round-trips
+	 * through frontmatter. Empty array when the task has no attachments
+	 * (the `attachments:` key is omitted from the file entirely). Mutated
+	 * only through `Backend.attachments?`, never via `update()`.
+	 */
+	attachments: Attachment[];
 	sections: Section[];
 	extra_frontmatter: Record<string, unknown>;
 	/**
@@ -78,6 +115,7 @@ export const FRONTMATTER_ALIASES: Record<string, string[]> = {
 	status: ["status"],
 	title: ["title"],
 	id: ["id"],
+	attachments: ["attachments"],
 };
 
 export const ORDNA_BODY_HEADINGS = {
@@ -120,6 +158,20 @@ export const frontmatterSchema = z
 		createdDate: z.union([z.string(), z.date()]).optional(),
 		updated_at: z.union([z.string(), z.date()]).optional(),
 		updatedDate: z.union([z.string(), z.date()]).optional(),
+		attachments: z
+			.array(
+				z.object({
+					id: z.string(),
+					name: z.string(),
+					type: z.string().nullable().optional(),
+					size: z.number().optional(),
+					// gray-matter coerces unquoted `YYYY-MM-DD` to a Date,
+					// same as created_at/updated_at — accept both.
+					added: z.union([z.string(), z.date()]).optional(),
+					src: z.string(),
+				}),
+			)
+			.optional(),
 	})
 	.passthrough();
 

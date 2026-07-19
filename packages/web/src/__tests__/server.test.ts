@@ -1,17 +1,10 @@
 import { spawnSync } from "node:child_process";
-import {
-	existsSync,
-	mkdirSync,
-	mkdtempSync,
-	readFileSync,
-	rmSync,
-	writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import type { WireTask, WsEvent } from "../shared/types.js";
 import { type RunWebHandle, runWeb } from "../server/start.js";
+import type { WireTask, WsEvent } from "../shared/types.js";
 
 function setupRepo(): string {
 	const cwd = mkdtempSync(join(tmpdir(), "ordna-web-"));
@@ -234,7 +227,7 @@ describe("web server — fetch capability", () => {
 		const base = `http://127.0.0.1:${handle.port}`;
 
 		const cfg = await (await fetch(`${base}/api/config`)).json();
-		expect(cfg.capabilities).toEqual({ fetch: false });
+		expect(cfg.capabilities).toEqual({ fetch: false, attach: true });
 
 		const res = await fetch(`${base}/api/fetch`, { method: "POST" });
 		expect(res.status).toBe(501);
@@ -259,7 +252,7 @@ describe("web server — fetch capability", () => {
 		const base = `http://127.0.0.1:${handle.port}`;
 
 		const cfg = await (await fetch(`${base}/api/config`)).json();
-		expect(cfg.capabilities).toEqual({ fetch: true });
+		expect(cfg.capabilities).toEqual({ fetch: true, attach: true });
 
 		// No remote configured → fetch is a quiet no-op (refsUpdated: 0).
 		const res = await fetch(`${base}/api/fetch`, { method: "POST" });
@@ -268,5 +261,161 @@ describe("web server — fetch capability", () => {
 		expect(body.ok).toBe(true);
 		expect(body.refsUpdated).toBe(0);
 		expect(typeof body.durationMs).toBe("number");
+	});
+});
+
+describe("web server — attachments", () => {
+	let handle: RunWebHandle;
+	let cwd: string;
+	let base: string;
+
+	beforeAll(async () => {
+		cwd = setupRepo();
+		handle = await runWeb({ cwd, port: 0, host: "127.0.0.1", openBrowser: false });
+		base = `http://127.0.0.1:${handle.port}`;
+	});
+
+	afterAll(async () => {
+		await handle.close();
+		rmSync(cwd, { recursive: true, force: true });
+	});
+
+	async function createTask(title: string): Promise<WireTask> {
+		const res = await fetch(`${base}/api/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title }),
+		});
+		return (await res.json()) as WireTask;
+	}
+
+	function upload(id: string, name: string, type: string, bytes: Uint8Array) {
+		const form = new FormData();
+		form.append("file", new File([bytes], name, { type }));
+		return fetch(`${base}/api/tasks/${id}/attachments`, {
+			method: "POST",
+			body: form,
+		});
+	}
+
+	it("uploads, downloads, and removes an attachment round-trip", async () => {
+		const task = await createTask("Attach me");
+		const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x01, 0x02]);
+
+		// upload
+		const up = await upload(task.id, "chart.png", "image/png", png);
+		expect(up.status).toBe(201);
+		const withAtt = (await up.json()) as WireTask;
+		expect(withAtt.attachments).toHaveLength(1);
+		const att = withAtt.attachments[0];
+		expect(att?.name).toBe("chart.png");
+		expect(att?.type).toBe("image/png");
+		expect(att?.size).toBe(png.byteLength);
+
+		// download — exact bytes + headers
+		const dl = await fetch(`${base}/api/tasks/${task.id}/attachments/${att?.id}`);
+		expect(dl.status).toBe(200);
+		expect(dl.headers.get("content-type")).toBe("image/png");
+		expect(dl.headers.get("content-disposition")).toContain("chart.png");
+		const back = new Uint8Array(await dl.arrayBuffer());
+		expect(Array.from(back)).toEqual(Array.from(png));
+
+		// the file lives under tasks/attachments/<id>/
+		expect(att?.src).toBe(`attachments/${task.id}/${att?.id}-chart.png`);
+		expect(existsSync(join(cwd, "tasks", att?.src ?? ""))).toBe(true);
+
+		// remove
+		const del = await fetch(`${base}/api/tasks/${task.id}/attachments/${att?.id}`, {
+			method: "DELETE",
+		});
+		expect(del.status).toBe(200);
+		const cleared = (await del.json()) as WireTask;
+		expect(cleared.attachments).toEqual([]);
+		expect(existsSync(join(cwd, "tasks", att?.src ?? ""))).toBe(false);
+	});
+
+	it("POST without a file field returns 400", async () => {
+		const task = await createTask("No file");
+		const res = await fetch(`${base}/api/tasks/${task.id}/attachments`, {
+			method: "POST",
+			body: new FormData(),
+		});
+		expect(res.status).toBe(400);
+	});
+
+	it("GET unknown attachment returns 404", async () => {
+		const task = await createTask("Missing");
+		const res = await fetch(`${base}/api/tasks/${task.id}/attachments/a99`);
+		expect(res.status).toBe(404);
+	});
+});
+
+describe("web server — attachment size cap", () => {
+	let handle: RunWebHandle;
+	let cwd: string;
+	let base: string;
+
+	beforeAll(async () => {
+		cwd = mkdtempSync(join(tmpdir(), "ordna-web-cap-"));
+		mkdirSync(join(cwd, ".ordna"));
+		writeFileSync(
+			join(cwd, ".ordna", "config.yaml"),
+			"tasksDir: tasks\nschema: ordna\nattachments:\n  maxSizeMb: 1\n",
+			"utf8",
+		);
+		mkdirSync(join(cwd, "tasks"));
+		handle = await runWeb({ cwd, port: 0, host: "127.0.0.1", openBrowser: false });
+		base = `http://127.0.0.1:${handle.port}`;
+	});
+
+	afterAll(async () => {
+		await handle.close();
+		rmSync(cwd, { recursive: true, force: true });
+	});
+
+	it("rejects an upload above attachments.maxSizeMb with 413", async () => {
+		const create = await fetch(`${base}/api/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "Too big" }),
+		});
+		const task = (await create.json()) as WireTask;
+
+		const form = new FormData();
+		form.append(
+			"file",
+			new File([new Uint8Array(1.5 * 1024 * 1024)], "big.bin", {
+				type: "application/octet-stream",
+			}),
+		);
+		const res = await fetch(`${base}/api/tasks/${task.id}/attachments`, {
+			method: "POST",
+			body: form,
+		});
+		expect(res.status).toBe(413);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toContain("limit is 1 MB");
+
+		// registry untouched
+		const after = await fetch(`${base}/api/tasks/${task.id}`);
+		const reloaded = (await after.json()) as WireTask;
+		expect(reloaded.attachments).toEqual([]);
+	});
+
+	it("accepts an upload under the limit", async () => {
+		const create = await fetch(`${base}/api/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "Small enough" }),
+		});
+		const task = (await create.json()) as WireTask;
+
+		const form = new FormData();
+		form.append("file", new File([new Uint8Array(1024)], "small.bin"));
+		const res = await fetch(`${base}/api/tasks/${task.id}/attachments`, {
+			method: "POST",
+			body: form,
+		});
+		expect(res.status).toBe(201);
 	});
 });

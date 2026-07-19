@@ -1,12 +1,13 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { type OrdnaConfig, loadConfig, resolveTasksDir } from "./config.js";
-import type { Task, TaskCreateInput, TaskUpdateInput } from "./schema.js";
+import type { Attachment, Task, TaskCreateInput, TaskUpdateInput } from "./schema.js";
 import {
+	ARCHIVED_STATUS,
+	type AttachmentInput,
 	type Backend,
 	type FetchResult,
 	type ListOptions,
-	ARCHIVED_STATUS,
 	isKnownStatus,
 } from "./storage/backend.js";
 import { FileBackend } from "./storage/backends/file.js";
@@ -132,10 +133,7 @@ export async function updateTask(
 	patch: TaskUpdateInput,
 	ctx: StoreContext = createContext(),
 ): Promise<Task> {
-	if (
-		patch.status !== undefined &&
-		!isKnownStatus(ctx.config, patch.status)
-	) {
+	if (patch.status !== undefined && !isKnownStatus(ctx.config, patch.status)) {
 		throw new Error(`Status "${patch.status}" is not in configured statuses.`);
 	}
 	return ctx.backend.update(id, patch);
@@ -175,10 +173,7 @@ export async function moveTask(
 	return ctx.backend.update(id, { status });
 }
 
-export async function deleteTask(
-	id: string,
-	ctx: StoreContext = createContext(),
-): Promise<void> {
+export async function deleteTask(id: string, ctx: StoreContext = createContext()): Promise<void> {
 	return ctx.backend.delete(id);
 }
 
@@ -189,13 +184,9 @@ export async function deleteTask(
  * File / hybrid throw a clear error so callers (UI buttons, CLI
  * commands) can show a useful message rather than silently no-op.
  */
-export async function fetchTasks(
-	ctx: StoreContext = createContext(),
-): Promise<FetchResult> {
+export async function fetchTasks(ctx: StoreContext = createContext()): Promise<FetchResult> {
 	if (typeof ctx.backend.fetch !== "function") {
-		throw new Error(
-			`storage: ${ctx.backend.kind} doesn't support fetch (namespace only in v1)`,
-		);
+		throw new Error(`storage: ${ctx.backend.kind} doesn't support fetch (namespace only in v1)`);
 	}
 	return ctx.backend.fetch();
 }
@@ -203,4 +194,58 @@ export async function fetchTasks(
 /** True if the active backend exposes a `fetch()` capability. */
 export function canFetch(ctx: StoreContext): boolean {
 	return typeof ctx.backend.fetch === "function";
+}
+
+/** True if the active backend can store attachments. */
+export function canAttach(ctx: StoreContext): boolean {
+	return typeof ctx.backend.attachments === "object";
+}
+
+function requireAttachments(ctx: StoreContext) {
+	if (typeof ctx.backend.attachments !== "object") {
+		throw new Error(`storage: ${ctx.backend.kind} doesn't support attachments`);
+	}
+	return ctx.backend.attachments;
+}
+
+/**
+ * Attach a file to a task. The bytes are stored by the active backend
+ * (working-tree file, git blob, or remote upload) and the task's
+ * `attachments` registry is updated. Returns the new record.
+ *
+ * Enforces `attachments.maxSizeMb` from config here — the one choke
+ * point every surface (CLI, TUI, web) goes through — so no caller can
+ * accidentally commit an oversized blob to git. 0 disables the cap.
+ */
+export async function addAttachment(
+	id: string,
+	input: AttachmentInput,
+	ctx: StoreContext = createContext(),
+): Promise<Attachment> {
+	const maxMb = ctx.config.attachments.maxSizeMb;
+	if (maxMb > 0 && input.bytes.byteLength > maxMb * 1024 * 1024) {
+		const actualMb = (input.bytes.byteLength / (1024 * 1024)).toFixed(1);
+		throw new Error(
+			`Attachment "${input.name}" is ${actualMb} MB; the limit is ${maxMb} MB. Raise \`attachments.maxSizeMb\` in .ordna/config.yaml to allow larger files.`,
+		);
+	}
+	return requireAttachments(ctx).add(id, input);
+}
+
+/** Read an attachment's bytes plus its metadata. Throws if unknown. */
+export async function readAttachment(
+	id: string,
+	attId: string,
+	ctx: StoreContext = createContext(),
+): Promise<{ meta: Attachment; bytes: Buffer }> {
+	return requireAttachments(ctx).read(id, attId);
+}
+
+/** Remove an attachment from a task (bytes + registry entry). */
+export async function removeAttachment(
+	id: string,
+	attId: string,
+	ctx: StoreContext = createContext(),
+): Promise<void> {
+	return requireAttachments(ctx).remove(id, attId);
 }
