@@ -2,10 +2,20 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { canFetch, createContext, createTask, deleteTask, fetchTasks, getTask, listTasks, moveTask, updateTask } from "../store.js";
 import { commitTasks } from "../git.js";
-import { watchTasks, type TaskEvent } from "../watcher.js";
 import { GitRunner } from "../storage/git-ref.js";
+import {
+	canFetch,
+	createContext,
+	createTask,
+	deleteTask,
+	fetchTasks,
+	getTask,
+	listTasks,
+	moveTask,
+	updateTask,
+} from "../store.js";
+import { type TaskEvent, watchTasks } from "../watcher.js";
 
 const tmpDirs: string[] = [];
 
@@ -14,9 +24,7 @@ afterEach(() => {
 	tmpDirs.length = 0;
 });
 
-async function setupNamespaceRepo(
-	extraConfig: string = "",
-): Promise<{ cwd: string; git: GitRunner }> {
+async function setupNamespaceRepo(extraConfig = ""): Promise<{ cwd: string; git: GitRunner }> {
 	const cwd = mkdtempSync(join(tmpdir(), "ordna-namespace-"));
 	tmpDirs.push(cwd);
 	const git = new GitRunner(cwd);
@@ -103,9 +111,7 @@ describe("NamespaceBackend — basic CRUD via the public store API", () => {
 		// To actually test CAS rejection we hit the GitRunner directly.
 		const ZERO = "0000000000000000000000000000000000000000";
 		const newBlob = await git.hashObject("dummy");
-		await expect(
-			git.updateRef("refs/ordna/tasks/T-001", newBlob, ZERO),
-		).rejects.toThrow();
+		await expect(git.updateRef("refs/ordna/tasks/T-001", newBlob, ZERO)).rejects.toThrow();
 	});
 
 	it("delete removes the ref", async () => {
@@ -113,10 +119,10 @@ describe("NamespaceBackend — basic CRUD via the public store API", () => {
 		const ctx = createContext(cwd);
 
 		await createTask({ title: "Doomed" }, ctx);
-		expect((await git.forEachRef("refs/ordna/tasks/T-001"))).toHaveLength(1);
+		expect(await git.forEachRef("refs/ordna/tasks/T-001")).toHaveLength(1);
 
 		await deleteTask("T-001", ctx);
-		expect((await git.forEachRef("refs/ordna/tasks/T-001"))).toHaveLength(0);
+		expect(await git.forEachRef("refs/ordna/tasks/T-001")).toHaveLength(0);
 		expect(await getTask("T-001", ctx)).toBeNull();
 	});
 
@@ -127,9 +133,7 @@ describe("NamespaceBackend — basic CRUD via the public store API", () => {
 		const dep = await createTask({ title: "Dependency" }, ctx);
 		await createTask({ title: "Blocked", depends_on: [dep.id] }, ctx);
 
-		await expect(moveTask("T-002", "done", ctx)).rejects.toThrow(
-			/dependencies not done/,
-		);
+		await expect(moveTask("T-002", "done", ctx)).rejects.toThrow(/dependencies not done/);
 
 		await moveTask(dep.id, "done", ctx);
 		const moved = await moveTask("T-002", "done", ctx);
@@ -166,14 +170,8 @@ describe("NamespaceBackend — config validation", () => {
 		const cwd = mkdtempSync(join(tmpdir(), "ordna-namespace-nogit-"));
 		tmpDirs.push(cwd);
 		mkdirSync(join(cwd, ".ordna"), { recursive: true });
-		writeFileSync(
-			join(cwd, ".ordna", "config.yaml"),
-			"storage: namespace\n",
-			"utf8",
-		);
-		expect(() => createContext(cwd)).toThrow(
-			/storage: namespace.*requires a git repository/,
-		);
+		writeFileSync(join(cwd, ".ordna", "config.yaml"), "storage: namespace\n", "utf8");
+		expect(() => createContext(cwd)).toThrow(/storage: namespace.*requires a git repository/);
 	});
 
 	it("rejects storage: namespace + schema: backlog at config load", async () => {
@@ -202,11 +200,7 @@ describe("NamespaceBackend — fetch capability", () => {
 		const fileCwd = mkdtempSync(join(tmpdir(), "ordna-file-fetch-"));
 		tmpDirs.push(fileCwd);
 		mkdirSync(join(fileCwd, ".ordna"), { recursive: true });
-		writeFileSync(
-			join(fileCwd, ".ordna", "config.yaml"),
-			"storage: file\nschema: ordna\n",
-			"utf8",
-		);
+		writeFileSync(join(fileCwd, ".ordna", "config.yaml"), "storage: file\nschema: ordna\n", "utf8");
 		const file = createContext(fileCwd);
 		expect(canFetch(file)).toBe(false);
 		await expect(fetchTasks(file)).rejects.toThrow(/doesn't support fetch/);
@@ -231,11 +225,15 @@ describe("NamespaceBackend — fetch capability", () => {
 		await originGit.run(["init", "--bare", "--initial-branch=main", "--quiet"]);
 
 		// Clone A (the one we'll fetch into).
-		const { cwd: cwdA, git: gitA } = await setupNamespaceRepo("namespace:\n  autoFetchIntervalMs: 0\n");
+		const { cwd: cwdA, git: gitA } = await setupNamespaceRepo(
+			"namespace:\n  autoFetchIntervalMs: 0\n",
+		);
 		await gitA.run(["remote", "add", "origin", origin]);
 
 		// Clone B (the one that publishes a task).
-		const { cwd: cwdB, git: gitB } = await setupNamespaceRepo("namespace:\n  autoFetchIntervalMs: 0\n");
+		const { cwd: cwdB, git: gitB } = await setupNamespaceRepo(
+			"namespace:\n  autoFetchIntervalMs: 0\n",
+		);
 		await gitB.run(["remote", "add", "origin", origin]);
 		const ctxB = createContext(cwdB);
 		await createTask({ title: "From B" }, ctxB);
@@ -277,9 +275,7 @@ describe("NamespaceBackend — state ref allocator + audit log", () => {
 	});
 
 	it("audit log accumulates create / update / archive / delete ops", async () => {
-		const { cwd, git } = await setupNamespaceRepo(
-			"namespace:\n  autoFetchIntervalMs: 0\n",
-		);
+		const { cwd, git } = await setupNamespaceRepo("namespace:\n  autoFetchIntervalMs: 0\n");
 		const ctx = createContext(cwd);
 		const task = await createTask({ title: "Auditable" }, ctx);
 		await updateTask(task.id, { title: "Renamed locally" }, ctx);
@@ -294,12 +290,7 @@ describe("NamespaceBackend — state ref allocator + audit log", () => {
 			next_id: number;
 			ops: Array<{ op: string; id: string }>;
 		};
-		expect(state.ops.map((o) => o.op)).toEqual([
-			"create",
-			"update",
-			"archive",
-			"delete",
-		]);
+		expect(state.ops.map((o) => o.op)).toEqual(["create", "update", "archive", "delete"]);
 		expect(state.ops.every((o) => o.id === "T-001")).toBe(true);
 	});
 });
@@ -325,13 +316,25 @@ describe("NamespaceBackend — auto-renumber on offline collision", () => {
 		return { origin, cwdA, gitA, cwdB, gitB };
 	}
 
+	/**
+	 * Simulate a partial push: the winner's task ref reached origin but
+	 * its state ref didn't (crash mid-push, legacy writer, …). Since
+	 * create() now merges origin's state before allocating, this is the
+	 * remaining scenario where the loser still allocates a colliding id —
+	 * exactly what the auto-renumber machinery exists for.
+	 */
+	async function dropOriginStateRef(origin: string): Promise<void> {
+		await new GitRunner(origin).run(["update-ref", "-d", "refs/ordna/state"]);
+	}
+
 	it("renames the loser's local id, cascades depends_on, emits renamed event", async () => {
-		const { cwdA, gitA, cwdB } = await setupTwoClonesAndOrigin();
+		const { origin, cwdA, gitA, cwdB } = await setupTwoClonesAndOrigin();
 
 		// B creates T-001 and pushes to origin.
 		const ctxB = createContext(cwdB);
 		await createTask({ title: "From B" }, ctxB);
 		await ctxB.backend.dispose();
+		await dropOriginStateRef(origin);
 
 		// A also creates T-001 (independent state ref) and a T-002 that
 		// depends on T-001. Subscribe to the watcher BEFORE the push
@@ -356,9 +359,7 @@ describe("NamespaceBackend — auto-renumber on offline collision", () => {
 		expect(idsA).toContain("T-001"); // B's task, now reachable on A
 		// One of A's own tasks got renamed; the dependent's depends_on
 		// should have been cascaded to point at the new id.
-		const dependent = tasksA.find((t) =>
-			t.title === "Dependent" || t.depends_on.length > 0,
-		);
+		const dependent = tasksA.find((t) => t.title === "Dependent" || t.depends_on.length > 0);
 		expect(dependent).toBeDefined();
 		expect(dependent?.depends_on).not.toContain("T-001-stale");
 		// The dependent should not still reference the collided id — it
@@ -386,14 +387,53 @@ describe("NamespaceBackend — auto-renumber on offline collision", () => {
 		expect(renameOp?.renamedFrom).toBe("T-001");
 	}, 15000);
 
+	it("re-emits the remote winner after `renamed` so UIs that drop oldId still show it", async () => {
+		const { origin, cwdA, cwdB } = await setupTwoClonesAndOrigin();
+
+		// B wins T-001 on origin.
+		const ctxB = createContext(cwdB);
+		await createTask({ title: "From B" }, ctxB);
+		await ctxB.backend.dispose();
+		await dropOriginStateRef(origin);
+
+		// A collides, watcher subscribed for the whole reconcile.
+		const ctxA = createContext(cwdA);
+		const events: TaskEvent[] = [];
+		const unsubscribe = watchTasks(ctxA, (e) => events.push(e));
+		await createTask({ title: "From A" }, ctxA);
+		await ctxA.backend.dispose();
+		await unsubscribe();
+
+		// Replay the events exactly the way the web/TUI reducers do:
+		// added/changed upsert by id, renamed drops oldId and upserts the
+		// renamed task. The regression: the ref-poll could emit the winner
+		// BEFORE `renamed`, whose oldId-removal then made it invisible
+		// until restart. The reconcile now re-emits the winner after
+		// `renamed`, so the reduced view must contain BOTH tasks.
+		const view = new Map<string, string>();
+		for (const e of events) {
+			if (e.type === "added" || e.type === "changed") {
+				view.set(e.task.id, e.task.title);
+			} else if (e.type === "renamed") {
+				view.delete(e.oldId);
+				view.set(e.task.id, e.task.title);
+			}
+		}
+		expect(view.get("T-001")).toBe("From B"); // the remote winner survives
+		const renamedIds = [...view.entries()].filter(([, title]) => title === "From A");
+		expect(renamedIds).toHaveLength(1); // A's task lives on under its new id
+		expect(renamedIds[0]?.[0]).not.toBe("T-001");
+	}, 15000);
+
 	it("autoRenumberOnConflict: false keeps the loser's local ref untouched (no rename)", async () => {
-		const { cwdA, cwdB } = await setupTwoClonesAndOrigin(
+		const { origin, cwdA, cwdB } = await setupTwoClonesAndOrigin(
 			"  autoRenumberOnConflict: false\n",
 		);
 
 		const ctxB = createContext(cwdB);
 		await createTask({ title: "From B" }, ctxB);
 		await ctxB.backend.dispose();
+		await dropOriginStateRef(origin);
 
 		const ctxA = createContext(cwdA);
 		const events: TaskEvent[] = [];
@@ -456,4 +496,27 @@ describe("NamespaceBackend — watcher emits TaskEvents on ref changes", () => {
 		expect(types).toContain("changed");
 		expect(types).toContain("removed");
 	});
+});
+
+describe("NamespaceBackend — offline create is refused (strict allocation)", () => {
+	it("create throws a clear error when origin is unreachable, with no local mutation", async () => {
+		const { cwd, git } = await setupNamespaceRepo("namespace:\n  autoFetchIntervalMs: 0\n");
+		await git.run(["remote", "add", "origin", "/nonexistent/ordna-offline-origin.git"]);
+
+		const ctx = createContext(cwd);
+		await expect(createTask({ title: "Offline" }, ctx)).rejects.toThrow(/origin is unreachable/);
+
+		// Creation refused BEFORE any local mutation: no task ref minted.
+		const refs = await git.forEachRef("refs/ordna/tasks/*");
+		expect(refs).toHaveLength(0);
+		await ctx.backend.dispose();
+	}, 15000);
+
+	it("create still works fully locally when no remote is configured", async () => {
+		const { cwd } = await setupNamespaceRepo("namespace:\n  autoFetchIntervalMs: 0\n");
+		const ctx = createContext(cwd);
+		const t = await createTask({ title: "Local only" }, ctx);
+		expect(t.id).toBe("T-001");
+		await ctx.backend.dispose();
+	}, 15000);
 });

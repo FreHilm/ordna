@@ -25,8 +25,6 @@ const NAMESPACE_FETCH_REFSPEC = `+${REF_PREFIX}*:${REF_PREFIX}*`;
 const ATT_REF_PREFIX = "refs/ordna/attachments/";
 const ATT_FETCH_REFSPEC = `+${ATT_REF_PREFIX}*:${ATT_REF_PREFIX}*`;
 const STATE_REF_NAME = "refs/ordna/state";
-const STATE_PUSH_REFSPEC = `+${STATE_REF_NAME}:${STATE_REF_NAME}`;
-const STATE_FETCH_REFSPEC = `+${STATE_REF_NAME}:${STATE_REF_NAME}`;
 const PUSH_DEBOUNCE_MS = 50;
 // Sentinel refname used internally to schedule the state ref push.
 const STATE_PUSH_SENTINEL = STATE_REF_NAME;
@@ -313,7 +311,13 @@ export class NamespaceBackend implements Backend {
 			throw new Error(`Status "${status}" is not in configured statuses.`);
 		}
 
-		// Allocate via SyncRef — CAS-retries on conflict, auto-fetches the
+		// Sync the shared allocator first. Strict: when a remote is
+		// configured but unreachable, refuse to create (clear error, no
+		// local mutation) — allocating from possibly-stale local state is
+		// how two machines mint the same id, and the resulting mess used
+		// to surface as "already exists despite a fresh allocation".
+		await sync.fetchAndMergeRemote({ requireReachable: true });
+		// Allocate via SyncRef — CAS-retries on conflict, merging the
 		// state ref from origin before retry.
 		const id = await sync.allocateNextId(this.config);
 
@@ -546,12 +550,9 @@ export class NamespaceBackend implements Backend {
 		} catch {
 			// no attachment refs on origin yet — fine
 		}
-		try {
-			await this.#git.fetchRefspec(STATE_FETCH_REFSPEC);
-		} catch {
-			// remote doesn't have the state ref yet — fine
-		}
-		if (this.#sync) this.#sync.invalidate();
+		// State ref: merge rather than force-fetch — overwriting the local
+		// blob with a stale remote one would roll the allocator backwards.
+		if (this.#sync) await this.#sync.fetchAndMergeRemote({ force: true });
 		const after = await this.#snapshotRefs();
 		const changed = this.#countRefDiff(before, after);
 		return { refsUpdated: changed, durationMs: Date.now() - start };
@@ -765,12 +766,13 @@ export class NamespaceBackend implements Backend {
 		const batch = Array.from(this.#pendingPushes.values());
 		this.#pendingPushes.clear();
 
-		// State ref push first — best-effort, force is fine since SyncRef
-		// has CAS-managed the ref in-process already.
+		// State ref push first — lease-based with merge-on-rejection, so a
+		// diverged writer's allocations are folded in rather than clobbered
+		// (the old force push silently erased the other machine's state).
 		const stateInBatch = batch.find((p) => p.refname === STATE_PUSH_SENTINEL);
-		if (stateInBatch) {
+		if (stateInBatch && this.#sync) {
 			try {
-				await this.#git.pushRef(STATE_PUSH_REFSPEC);
+				await this.#sync.pushToOrigin();
 			} catch (err) {
 				const msg = err instanceof Error ? err.message : String(err);
 				console.error(`[ordna-namespace] state push failed: ${msg}`);
@@ -831,11 +833,9 @@ export class NamespaceBackend implements Backend {
 			//    by the remote's value (that's fine; we abandon the local
 			//    write of that ref and recreate under a new id).
 			await this.#git.fetchRefspec(NAMESPACE_FETCH_REFSPEC);
-			try {
-				await this.#git.fetchRefspec(STATE_FETCH_REFSPEC);
-			} catch {
-				// state ref may not exist on origin yet
-			}
+			// State ref: merge (not force-fetch) so local unpushed ops and
+			// the allocator high-water mark survive the reconcile.
+			await sync.fetchAndMergeRemote({ force: true });
 			sync.invalidate();
 
 			// 2. Read the blob we wanted to push. push.newOid is the OID
@@ -898,8 +898,23 @@ export class NamespaceBackend implements Backend {
 			});
 			this.#schedulePushState();
 
-			// 8. Notify watchers.
+			// 8. Notify watchers. `renamed` goes first — the UIs drop their
+			//    oldId entry when handling it — and then the remote winner
+			//    (which the fetch in step 1 installed at oldId) is re-emitted
+			//    as `changed` so it deterministically reappears. Without this,
+			//    the ref-poll may tick mid-reconcile and emit the winner
+			//    BEFORE `renamed` (whose UI handling then removes it), and —
+			//    since the poll snapshot already recorded the winner's oid —
+			//    no later poll re-emits it: the winning task stays invisible
+			//    until a restart even though the refs are correct.
 			this.#emit({ type: "renamed", oldId, newId, task: renamed });
+			const winnerRefname = refnameFor(oldId);
+			const winnerRefs = await this.#git.forEachRef(winnerRefname);
+			const winnerEntry = winnerRefs.find((r) => r.refname === winnerRefname);
+			if (winnerEntry) {
+				const winner = await this.#parseRef(winnerRefname, winnerEntry.oid);
+				if (winner) this.#emit({ type: "changed", task: winner });
+			}
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
 			console.error(`[ordna-namespace] reconcile failed for ${push.refname}: ${msg}`);

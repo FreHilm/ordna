@@ -24,7 +24,6 @@ import { defaultSectionsFor, parseTask, parseTaskFile, serializeTask } from "../
 import { type Op, SyncRef } from "../sync-ref.js";
 
 const SYNC_REF_NAME = "refs/ordna/state";
-const SYNC_PUSH_REFSPEC = `+${SYNC_REF_NAME}:${SYNC_REF_NAME}`;
 
 function today(): string {
 	return new Date().toISOString().slice(0, 10);
@@ -75,7 +74,12 @@ export class HybridBackend implements Backend {
 		await this.#git.ensureRepository();
 		ensureTasksDir(this.tasksDir);
 		this.#sync = new SyncRef(this.#git, SYNC_REF_NAME);
-		this.#pushQueue = new PushQueue(this.#git, SYNC_PUSH_REFSPEC, "ordna-hybrid");
+		// Lease-based state push: on rejection (another clone pushed
+		// first) it fetches, merges allocator + audit log, and retries —
+		// replacing the old force-push that silently clobbered other
+		// machines' allocations.
+		const sync = this.#sync;
+		this.#pushQueue = new PushQueue(() => sync.pushToOrigin(), "ordna-hybrid");
 	}
 
 	async #ensureInit(): Promise<void> {
@@ -138,8 +142,12 @@ export class HybridBackend implements Backend {
 			throw new Error(`Status "${status}" is not in configured statuses.`);
 		}
 
-		// CAS-allocate the next id from the sync ref. This is what
-		// makes hybrid mode safe across offline collaborators.
+		// Pull other machines' allocations into the local state ref first —
+		// without this, every clone counts 1, 2, 3… in its own world and
+		// ids collide across machines. Strict: when a remote is configured
+		// but unreachable, creation refuses (clear error, no local
+		// mutation) rather than allocating from possibly-stale state.
+		await sync.fetchAndMergeRemote({ requireReachable: true });
 		const id = await sync.allocateNextId(this.config);
 
 		const now = today();

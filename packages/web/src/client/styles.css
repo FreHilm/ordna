@@ -1615,6 +1615,13 @@ select {
 	border: 1px solid var(--line);
 	border-radius: var(--r-sm);
 	padding: 10px 14px;
+	/* Rendered as a <button> so it's click-to-dismiss — errors linger
+	   20s, so users need a way out. Reset the button chrome: */
+	font: inherit;
+	color: inherit;
+	text-align: left;
+	cursor: pointer;
+	max-width: min(680px, calc(100vw - 40px));
 	font-size: 13px;
 	color: var(--text);
 	box-shadow: var(--shadow);

@@ -85,8 +85,15 @@ export function buildApiRoutes(state: ApiState): Hono {
 		if (!body.title || body.title.trim().length === 0) {
 			return c.json({ error: "title is required" }, 400);
 		}
-		const task = await createTask(body as { title: string }, state.ctx as StoreContext);
-		return c.json(toWireTask(task), 201);
+		try {
+			const task = await createTask(body as { title: string }, state.ctx as StoreContext);
+			return c.json(toWireTask(task), 201);
+		} catch (err) {
+			// Offline in hybrid/namespace mode surfaces here ("origin is
+			// unreachable") — a retryable condition, not a client mistake.
+			const msg = (err as Error).message;
+			return c.json({ error: msg }, msg.includes("unreachable") ? 503 : 400);
+		}
 	});
 
 	api.patch("/tasks/:id", async (c) => {

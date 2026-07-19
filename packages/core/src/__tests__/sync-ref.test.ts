@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { configSchema, type OrdnaConfig } from "../config.js";
+import { type OrdnaConfig, configSchema } from "../config.js";
 import { GitRunner } from "../storage/git-ref.js";
 import { type Op, SyncRef } from "../storage/sync-ref.js";
 
@@ -167,11 +167,7 @@ describe("HybridBackend storage layout (integration via the public store API)", 
 		// Write a config that selects hybrid mode.
 		const { mkdirSync, writeFileSync } = await import("node:fs");
 		mkdirSync(join(cwd, ".ordna"), { recursive: true });
-		writeFileSync(
-			join(cwd, ".ordna", "config.yaml"),
-			"storage: hybrid\nschema: ordna\n",
-			"utf8",
-		);
+		writeFileSync(join(cwd, ".ordna", "config.yaml"), "storage: hybrid\nschema: ordna\n", "utf8");
 
 		const { createContext, createTask } = await import("../store.js");
 		const ctx = createContext(cwd);
@@ -196,4 +192,121 @@ describe("HybridBackend storage layout (integration via the public store API)", 
 		expect(state.ops.map((o) => o.op)).toEqual(["create", "create", "create"]);
 		expect(state.ops.map((o) => o.id)).toEqual(["T-001", "T-002", "T-003"]);
 	});
+});
+
+describe("Hybrid id allocation across clones (shared origin)", () => {
+	async function setupOriginAndClones(): Promise<{
+		originGit: GitRunner;
+		cwdA: string;
+		cwdB: string;
+	}> {
+		const { mkdirSync, writeFileSync } = await import("node:fs");
+		const root = mkdtempSync(join(tmpdir(), "ordna-hybrid-clones-"));
+		tmpDirs.push(root);
+		const originDir = join(root, "origin.git");
+		const originGit = new GitRunner(root);
+		await originGit.run(["init", "--bare", "--quiet", originDir]);
+
+		const mkClone = async (name: string): Promise<string> => {
+			const cwd = join(root, name);
+			await originGit.run(["clone", "--quiet", originDir, cwd]);
+			const git = new GitRunner(cwd);
+			await git.run(["config", "user.email", `${name}@test.se`]);
+			await git.run(["config", "user.name", name]);
+			mkdirSync(join(cwd, ".ordna"), { recursive: true });
+			writeFileSync(join(cwd, ".ordna", "config.yaml"), "storage: hybrid\nschema: ordna\n", "utf8");
+			return cwd;
+		};
+		return {
+			originGit: new GitRunner(originDir),
+			cwdA: await mkClone("a"),
+			cwdB: await mkClone("b"),
+		};
+	}
+
+	async function readOriginState(originGit: GitRunner): Promise<{ next_id: number; ops: Op[] }> {
+		const refs = await originGit.forEachRef("refs/ordna/state");
+		const oid = refs.find((r) => r.refname === "refs/ordna/state")?.oid;
+		expect(oid).toBeDefined();
+		return JSON.parse(await originGit.catBlob(oid as string));
+	}
+
+	it("clone B allocates T-002 after clone A created T-001 (fetch-merge before allocate)", async () => {
+		const { createContext, createTask } = await import("../store.js");
+		const { originGit, cwdA, cwdB } = await setupOriginAndClones();
+
+		const ctxA = createContext(cwdA);
+		const a = await createTask({ title: "From A" }, ctxA);
+		expect(a.id).toBe("T-001");
+		await ctxA.backend.dispose(); // flush the lease push to origin
+
+		const ctxB = createContext(cwdB);
+		const b = await createTask({ title: "From B" }, ctxB);
+		// The regression: B used to count from its own local state and
+		// also hand out T-001.
+		expect(b.id).toBe("T-002");
+		await ctxB.backend.dispose();
+
+		const state = await readOriginState(originGit);
+		expect(state.next_id).toBe(3);
+		expect(state.ops).toHaveLength(2);
+	}, 20000);
+
+	it("diverged state pushes converge via lease + merge instead of clobbering", async () => {
+		const { createContext, createTask } = await import("../store.js");
+		const { originGit, cwdA, cwdB } = await setupOriginAndClones();
+
+		// A creates and pushes.
+		const ctxA = createContext(cwdA);
+		await createTask({ title: "A1" }, ctxA);
+		await ctxA.backend.dispose();
+
+		// B creates (fetch-merges → T-002) and pushes.
+		const ctxB = createContext(cwdB);
+		const b = await createTask({ title: "B1" }, ctxB);
+		expect(b.id).toBe("T-002");
+		await ctxB.backend.dispose();
+
+		// A creates again immediately — within the 5s fetch throttle, so A
+		// allocates from stale local state (this is the concurrent-create
+		// window). Its push lease must be REJECTED (origin moved to B's
+		// state), then merged and retried — not force-clobbered.
+		const ctxA2 = createContext(cwdA);
+		await createTask({ title: "A2" }, ctxA2);
+		await ctxA2.backend.dispose();
+
+		const state = await readOriginState(originGit);
+		// Union of all three creates survives on origin; the old force-push
+		// would have erased B's op and next_id.
+		expect(state.ops).toHaveLength(3);
+		expect(state.next_id).toBeGreaterThanOrEqual(3);
+		const titles = state.ops.map((o) => o.op);
+		expect(titles).toEqual(["create", "create", "create"]);
+	}, 20000);
+});
+
+describe("Hybrid offline create is refused (strict allocation)", () => {
+	it("create throws a clear error when origin is unreachable, with no file written", async () => {
+		const { createContext, createTask } = await import("../store.js");
+		const { cwdA } = await (async () => {
+			const { mkdirSync, writeFileSync } = await import("node:fs");
+			const root = mkdtempSync(join(tmpdir(), "ordna-hybrid-offline-"));
+			tmpDirs.push(root);
+			const cwd = join(root, "a");
+			const git = new GitRunner(root);
+			await git.run(["init", "--quiet", cwd]);
+			const cloneGit = new GitRunner(cwd);
+			await cloneGit.run(["config", "user.email", "a@test.se"]);
+			await cloneGit.run(["config", "user.name", "a"]);
+			await cloneGit.run(["remote", "add", "origin", "/nonexistent/ordna-offline.git"]);
+			mkdirSync(join(cwd, ".ordna"), { recursive: true });
+			writeFileSync(join(cwd, ".ordna", "config.yaml"), "storage: hybrid\nschema: ordna\n", "utf8");
+			return { cwdA: cwd };
+		})();
+
+		const ctx = createContext(cwdA);
+		await expect(createTask({ title: "Offline" }, ctx)).rejects.toThrow(/origin is unreachable/);
+		expect(existsSync(join(cwdA, "tasks", "T-001.md"))).toBe(false);
+		await ctx.backend.dispose();
+	}, 15000);
 });

@@ -8,7 +8,7 @@ import {
 	useSensor,
 	useSensors,
 } from "@dnd-kit/core";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentHookInfo, UiConfig, WireTask, WsEvent } from "../shared/types.js";
 import { Card } from "./Card.js";
 import { Cheatsheet } from "./Cheatsheet.js";
@@ -29,6 +29,18 @@ type View =
 type PriorityFilter = "high" | "medium" | "low" | null;
 
 const ARCHIVED_STATUS = "archived";
+
+/**
+ * Insert-or-replace a task by id. Create responses race with the
+ * watcher's WebSocket `added` event (whichever lands first), so every
+ * path that adds a task to state must be idempotent — a blind append
+ * briefly shows the same task twice until a reload.
+ */
+function upsertTask(prev: WireTask[], task: WireTask): WireTask[] {
+	const next = prev.filter((t) => t.id !== task.id);
+	next.push(task);
+	return next;
+}
 
 function groupBy(tasks: WireTask[], statuses: string[]): Record<string, WireTask[]> {
 	const groups: Record<string, WireTask[]> = {};
@@ -56,6 +68,15 @@ export function App(): JSX.Element {
 	const [tasks, setTasks] = useState<WireTask[]>([]);
 	const [query, setQuery] = useState("");
 	const [toast, setToast] = useState<{ message: string; kind: "info" | "error" } | null>(null);
+	// One timer for the visible toast: replacing a toast cancels the old
+	// timer so a short-lived info timeout can't dismiss a newer error.
+	// Errors stay >= 20s (they carry recovery instructions); info ~3s.
+	const toastTimer = useRef<number | null>(null);
+	const showToast = useCallback((message: string, kind: "info" | "error" = "info") => {
+		setToast({ message, kind });
+		if (toastTimer.current !== null) window.clearTimeout(toastTimer.current);
+		toastTimer.current = window.setTimeout(() => setToast(null), kind === "error" ? 20000 : 3000);
+	}, []);
 	const [showCreate, setShowCreate] = useState(false);
 	const [activeId, setActiveId] = useState<string | null>(null);
 	const [openTaskId, setOpenTaskId] = useState<string | null>(null);
@@ -119,13 +140,11 @@ export function App(): JSX.Element {
 				// the modal stays on the same content.
 				setOpenTaskId((cur) => (cur === evt.oldId ? evt.newId : cur));
 				setActiveId((cur) => (cur === evt.oldId ? evt.newId : cur));
-				const msg = `Renamed ${evt.oldId} → ${evt.newId}`;
-				setToast({ message: msg, kind: "info" });
-				window.setTimeout(() => setToast(null), 3500);
+				showToast(`Renamed ${evt.oldId} → ${evt.newId}`);
 			}
 		};
 		return () => ws.close();
-	}, []);
+	}, [showToast]);
 
 	const statuses = config?.statuses ?? ["todo", "doing", "done"];
 
@@ -133,21 +152,23 @@ export function App(): JSX.Element {
 		setTheme((t) => (t === "dark" ? "light" : "dark"));
 	}, []);
 
-	const createAt = useCallback(async (status?: string) => {
-		if (!status) {
-			setShowCreate(true);
-			return;
-		}
-		try {
-			const t = await api.create({ title: "New task" });
-			setTasks((prev) => [...prev, t]);
-			setOpenTaskId(t.id);
-			setOpenInEdit(true);
-		} catch (e) {
-			setToast({ message: (e as Error).message, kind: "error" });
-			window.setTimeout(() => setToast(null), 4000);
-		}
-	}, []);
+	const createAt = useCallback(
+		async (status?: string) => {
+			if (!status) {
+				setShowCreate(true);
+				return;
+			}
+			try {
+				const t = await api.create({ title: "New task" });
+				setTasks((prev) => upsertTask(prev, t));
+				setOpenTaskId(t.id);
+				setOpenInEdit(true);
+			} catch (e) {
+				showToast((e as Error).message, "error");
+			}
+		},
+		[showToast],
+	);
 
 	const runFetch = useCallback(async () => {
 		if (isFetching) return;
@@ -159,15 +180,13 @@ export function App(): JSX.Element {
 				refs === 0
 					? `Up to date · ${result.durationMs}ms`
 					: `Fetched ${refs} ref${refs === 1 ? "" : "s"} · ${result.durationMs}ms`;
-			setToast({ message: msg, kind: "info" });
-			window.setTimeout(() => setToast(null), 2500);
+			showToast(msg);
 		} catch (e) {
-			setToast({ message: (e as Error).message, kind: "error" });
-			window.setTimeout(() => setToast(null), 4000);
+			showToast((e as Error).message, "error");
 		} finally {
 			setIsFetching(false);
 		}
-	}, [isFetching]);
+	}, [isFetching, showToast]);
 
 	// Detach the sidebar into a floating panel when the window is narrow.
 	// Crossing to <= 980px starts a 2s grace timer before folding (so a
@@ -305,8 +324,7 @@ export function App(): JSX.Element {
 			await api.move(taskId, targetStatus);
 		} catch (error) {
 			setTasks(previous);
-			setToast({ message: (error as Error).message, kind: "error" });
-			window.setTimeout(() => setToast(null), 4000);
+			showToast((error as Error).message, "error");
 		}
 	};
 
@@ -319,25 +337,23 @@ export function App(): JSX.Element {
 			if (!agentHook?.enabled) return;
 			try {
 				await api.agent(id);
-				setToast({ message: `Sent ${id} to ${agentHook.label}`, kind: "info" });
+				showToast(`Sent ${id} to ${agentHook.label}`);
 			} catch (error) {
-				setToast({ message: (error as Error).message, kind: "error" });
+				showToast((error as Error).message, "error");
 			}
-			window.setTimeout(() => setToast(null), 3000);
 		},
-		[agentHook],
+		[agentHook, showToast],
 	);
 
 	const handleCreate = async (title: string): Promise<void> => {
 		try {
 			const created = await api.create({ title });
-			setTasks((prev) => [...prev, created]);
-			setToast({ message: `Created ${created.id}`, kind: "info" });
+			setTasks((prev) => upsertTask(prev, created));
+			showToast(`Created ${created.id}`);
 		} catch (error) {
-			setToast({ message: (error as Error).message, kind: "error" });
+			showToast((error as Error).message, "error");
 		}
 		setShowCreate(false);
-		window.setTimeout(() => setToast(null), 2500);
 	};
 
 	const activeTasks = useMemo(() => tasks.filter((t) => t.status !== ARCHIVED_STATUS), [tasks]);
@@ -393,10 +409,7 @@ export function App(): JSX.Element {
 					</div>
 				) : null}
 				<div className="topbar-spacer" />
-				<div
-					className="search"
-					style={{ flex: "0 1 320px", minWidth: 110, height: 34 }}
-				>
+				<div className="search" style={{ flex: "0 1 320px", minWidth: 110, height: 34 }}>
 					<Icon.Search />
 					<input
 						id="topbar-search"
@@ -643,11 +656,9 @@ export function App(): JSX.Element {
 						try {
 							await api.remove(id);
 							setTasks((prev) => prev.filter((t) => t.id !== id));
-							setToast({ message: `Deleted ${id}`, kind: "info" });
-							window.setTimeout(() => setToast(null), 2500);
+							showToast(`Deleted ${id}`);
 						} catch (error) {
-							setToast({ message: (error as Error).message, kind: "error" });
-							window.setTimeout(() => setToast(null), 4000);
+							showToast((error as Error).message, "error");
 						}
 					}}
 				/>
@@ -668,7 +679,14 @@ export function App(): JSX.Element {
 			{cheatOpen ? <Cheatsheet onClose={() => setCheatOpen(false)} /> : null}
 
 			{toast ? (
-				<div className={`toast ${toast.kind === "error" ? "error" : ""}`}>{toast.message}</div>
+				<button
+					type="button"
+					className={`toast ${toast.kind === "error" ? "error" : ""}`}
+					title="Dismiss"
+					onClick={() => setToast(null)}
+				>
+					{toast.message}
+				</button>
 			) : null}
 		</div>
 	);

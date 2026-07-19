@@ -41,8 +41,39 @@ export interface Op {
 
 const DEFAULT_REF = "refs/ordna/state";
 const EMPTY_OID = ""; // CAS sentinel for "must not exist"
+// Local tracking ref mirroring what we last saw of origin's state ref —
+// the expected-old value for lease pushes (same role as a remote-tracking
+// branch). Never pushed.
+const ORIGIN_TRACK_SUFFIX = "-origin";
+// Don't re-fetch origin's state more often than this. Keeps
+// fetch-before-allocate from adding a network round-trip to every
+// mutation in a burst, while still catching another machine's
+// allocations at human pace.
+const REMOTE_SYNC_TTL_MS = 5000;
 
 const EMPTY_STATE: SyncState = { next_id: 1, ops: [] };
+
+/**
+ * Merge two state blobs from diverged writers: the allocator takes the
+ * max (ids are never handed out twice going forward), and the audit
+ * logs are unioned (dedup by full-entry identity) in timestamp order.
+ */
+export function mergeSyncStates(a: SyncState, b: SyncState): SyncState {
+	const seen = new Set<string>();
+	const ops: Op[] = [];
+	for (const op of [...a.ops, ...b.ops]) {
+		const key = JSON.stringify(op);
+		if (seen.has(key)) continue;
+		seen.add(key);
+		ops.push(op);
+	}
+	ops.sort((x, y) => x.ts.localeCompare(y.ts));
+	return { next_id: Math.max(a.next_id, b.next_id), ops };
+}
+
+function statesEqual(a: SyncState, b: SyncState): boolean {
+	return JSON.stringify(a) === JSON.stringify(b);
+}
 
 /**
  * Wraps a single git ref carrying a JSON `SyncState` blob.
@@ -59,11 +90,21 @@ const EMPTY_STATE: SyncState = { next_id: 1, ops: [] };
  */
 export class SyncRef {
 	#cached: { oid: string | null; state: SyncState } | null = null;
+	/**
+	 * Last known oid of origin's state ref (`""` = confirmed absent,
+	 * `null` = never looked). The lease value for `pushToOrigin`.
+	 */
+	#originOid: string | null = null;
+	#lastRemoteSyncMs = 0;
 
 	constructor(
 		private readonly git: GitRunner,
 		readonly refname: string = DEFAULT_REF,
 	) {}
+
+	get #originTrackRef(): string {
+		return this.refname + ORIGIN_TRACK_SUFFIX;
+	}
 
 	/**
 	 * Read the current state. Returns an empty state if the ref
@@ -165,6 +206,125 @@ export class SyncRef {
 		});
 	}
 
+	/**
+	 * Pull origin's state ref and merge it into the local one (max
+	 * next_id, unioned ops). This is what makes id allocation
+	 * collision-safe across clones: call it before allocating so
+	 * another machine's allocations are reflected locally.
+	 *
+	 * Best-effort by default — no remote, network down, or remote ref
+	 * absent all degrade to "allocate from local state". Throttled to
+	 * one fetch per 5s unless `force`.
+	 *
+	 * With `requireReachable` (the id-allocation path in hybrid and
+	 * namespace mode), an unreachable remote becomes a thrown error
+	 * instead: allocating from possibly-stale local state is how two
+	 * machines mint the same task id, so creation refuses until the
+	 * shared counter can be consulted. A reachable remote that simply
+	 * has no state ref yet is fine (first push wins).
+	 */
+	async fetchAndMergeRemote(
+		opts: { force?: boolean; requireReachable?: boolean } = {},
+	): Promise<void> {
+		const now = Date.now();
+		if (!opts.force && !opts.requireReachable && now - this.#lastRemoteSyncMs < REMOTE_SYNC_TTL_MS)
+			return;
+		this.#lastRemoteSyncMs = now;
+		if (!(await this.git.hasRemote())) return;
+
+		try {
+			await this.git.fetchRefspec(`+${this.refname}:${this.#originTrackRef}`);
+		} catch (err) {
+			const raw = err instanceof Error ? err.message : String(err);
+			if (raw.toLowerCase().includes("couldn't find remote ref")) {
+				// Remote exists but has no state ref yet — first push wins.
+				this.#originOid = "";
+				return;
+			}
+			if (opts.requireReachable) {
+				const firstLine = raw.split("\n").find((l) => l.trim().length > 0) ?? raw;
+				throw new Error(
+					`ordna: origin is unreachable — task ids are allocated from the shared state ref, so creating tasks needs a connection. Check your network and retry, or remove the remote (\`git remote remove origin\`) to work fully locally. (${firstLine.trim()})`,
+				);
+			}
+			return; // network failure: proceed on local state
+		}
+
+		const refs = await this.git.forEachRef(this.#originTrackRef);
+		const entry = refs.find((r) => r.refname === this.#originTrackRef);
+		if (!entry) {
+			this.#originOid = "";
+			return;
+		}
+		this.#originOid = entry.oid;
+
+		let remote: SyncState;
+		try {
+			const parsed = JSON.parse(await this.git.catBlob(entry.oid)) as SyncState;
+			remote = {
+				next_id: typeof parsed.next_id === "number" ? parsed.next_id : 1,
+				ops: Array.isArray(parsed.ops) ? parsed.ops : [],
+			};
+		} catch {
+			return; // unreadable remote blob — ignore
+		}
+
+		// Merge into local with a small CAS-retry loop (another local
+		// writer may be mutating concurrently).
+		for (let attempt = 0; attempt < 3; attempt++) {
+			const { oid, state } = await this.#readUncachedAndCache();
+			const merged = mergeSyncStates(state, remote);
+			if (statesEqual(merged, state)) return;
+			try {
+				await this.#writeCAS(oid, merged);
+				return;
+			} catch (err) {
+				if (!isCASConflict(err)) throw err;
+				this.invalidate();
+			}
+		}
+	}
+
+	/**
+	 * Push the local state ref to origin with `--force-with-lease`
+	 * against the last known origin oid. On rejection (another machine
+	 * pushed first), fetch + merge their state and retry — so diverged
+	 * allocators converge instead of the old force-push silently
+	 * clobbering whoever pushed last.
+	 */
+	async pushToOrigin(): Promise<void> {
+		if (!(await this.git.hasRemote())) return;
+
+		for (let attempt = 0; attempt < 3; attempt++) {
+			if (this.#originOid === null) {
+				// Never seen origin's state — learn it (and merge) first.
+				await this.fetchAndMergeRemote({ force: true });
+				if (this.#originOid === null) return; // network down; try next time
+			}
+			const { oid } = await this.#readUncachedAndCache();
+			if (oid === null || oid === this.#originOid) return; // nothing to push
+
+			try {
+				await this.git.pushRefWithLease(this.refname, oid, this.#originOid);
+				this.#originOid = oid;
+				// Keep the tracking ref in step (best-effort).
+				try {
+					await this.git.updateRef(this.#originTrackRef, oid);
+				} catch {
+					// cosmetic only
+				}
+				return;
+			} catch (err) {
+				if (!isLeaseRejection(err)) throw err; // network/auth → caller logs
+				// Remote moved underneath us: merge theirs in and retry.
+				await this.fetchAndMergeRemote({ force: true });
+			}
+		}
+		console.error(
+			`[ordna] state push kept colliding for ${this.refname}; will retry on the next mutation.`,
+		);
+	}
+
 	async #readUncachedAndCache(): Promise<{ oid: string | null; state: SyncState }> {
 		const fresh = await this.#readUncached();
 		this.#cached = fresh;
@@ -191,17 +351,12 @@ export class SyncRef {
 		} catch (err) {
 			if (!isCASConflict(err)) throw err;
 
-			// Fetch from origin if it exists, then retry. If fetch fails
-			// (no remote, network down), the retry still re-reads local
-			// state via forEachRef so concurrent in-process writers are
-			// handled too.
-			if (await this.git.hasRemote()) {
-				try {
-					await this.git.fetchRef(this.refname);
-				} catch {
-					// Best-effort; fall through to retry against local state.
-				}
-			}
+			// Merge origin's state in (best-effort), then retry. Merge —
+			// never a force fetch: overwriting the local ref with a stale
+			// remote blob would roll the allocator backwards and lose
+			// locally-recorded ops. The retry re-reads local state either
+			// way, so concurrent in-process writers are handled too.
+			await this.fetchAndMergeRemote({ force: true });
 			this.invalidate();
 			try {
 				return await operation();
@@ -224,6 +379,18 @@ export class SyncRef {
  * than introducing a typed error from `GitRunner` — keeps the runner
  * generic.
  */
+/** Push rejected by the remote (lease failed / non-fast-forward). */
+function isLeaseRejection(err: unknown): boolean {
+	if (!(err instanceof Error)) return false;
+	const msg = err.message.toLowerCase();
+	return (
+		msg.includes("rejected") ||
+		msg.includes("stale info") ||
+		msg.includes("non-fast-forward") ||
+		msg.includes("fetch first")
+	);
+}
+
 function isCASConflict(err: unknown): boolean {
 	if (!(err instanceof Error)) return false;
 	const msg = err.message.toLowerCase();

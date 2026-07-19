@@ -1,32 +1,29 @@
-import type { GitRunner } from "./git-ref.js";
-
 const DEBOUNCE_MS = 50;
 
 /**
- * Fire-and-forget push coalescer. Used by hybrid and namespace modes
- * to keep their refs synced with `origin` without surprising the
- * user with synchronous network calls on every mutation.
+ * Fire-and-forget push coalescer. Used by hybrid mode to keep its
+ * state ref synced with `origin` without surprising the user with
+ * synchronous network calls on every mutation.
  *
  * Semantics:
  * - `schedule()` is sync and never throws. Multiple rapid calls
- *   within ~50ms collapse into a single push.
- * - Pushes run in the background. Errors are logged to stderr; the
+ *   within ~50ms collapse into a single run of `push`.
+ * - Runs happen in the background. Errors are logged to stderr; the
  *   user's command stays successful.
- * - If no `origin` remote is configured at first push time, the
- *   queue becomes a permanent no-op (decided once, cached forever).
  * - `flush()` (called from `dispose()`) awaits any pending or
- *   in-flight push so the process can exit cleanly.
+ *   in-flight run so the process can exit cleanly.
+ *
+ * The actual push strategy lives in the injected `push` callback
+ * (hybrid passes `SyncRef.pushToOrigin`, which is lease-based and
+ * merges on rejection); this class only owns debounce + lifecycle.
  */
 export class PushQueue {
 	#timer: ReturnType<typeof setTimeout> | null = null;
 	#current: Promise<void> | null = null;
 	#pending = false;
-	#remoteChecked = false;
-	#remoteExists = false;
 
 	constructor(
-		private readonly git: GitRunner,
-		private readonly refspec: string,
+		private readonly push: () => Promise<void>,
 		private readonly label = "ordna",
 	) {}
 
@@ -86,13 +83,8 @@ export class PushQueue {
 	}
 
 	async #runOnce(): Promise<void> {
-		if (!this.#remoteChecked) {
-			this.#remoteChecked = true;
-			this.#remoteExists = await this.git.hasRemote();
-		}
-		if (!this.#remoteExists) return;
 		try {
-			await this.git.pushRef(this.refspec);
+			await this.push();
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
 			console.error(`[${this.label}] push failed: ${msg}`);

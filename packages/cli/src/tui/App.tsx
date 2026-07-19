@@ -26,6 +26,7 @@ import { startTransition, useCallback, useEffect, useMemo, useState } from "reac
 import { type AgentHookConfig, loadAgentHook, sendAgent } from "../agent.js";
 import { expandPath, openPath, resolveOpenablePath } from "../lib/attachment-utils.js";
 import { Column } from "./Column.js";
+import { ErrorDialog } from "./ErrorDialog.js";
 import { FileViewer } from "./FileViewer.js";
 import { SelectPrompt } from "./SelectPrompt.js";
 import {
@@ -54,6 +55,7 @@ type Mode =
 	| { kind: "move"; task: Task }
 	| { kind: "attach"; task: Task }
 	| { kind: "viewfile"; task: Task; att: Attachment }
+	| { kind: "error"; message: string }
 	| { kind: "search" };
 
 type Focus = "board" | "sidebar";
@@ -536,10 +538,13 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 			const task = await createTask({ title }, ctx);
 			setTasks((prev) => mergeTask(prev, task));
 			flashToast(`Created ${task.id}`);
+			setMode({ kind: "browse" });
 		} catch (error) {
-			flashToast((error as Error).message);
+			// Create failures can carry recovery instructions (e.g. "origin
+			// is unreachable" in hybrid/namespace mode) — show them in a
+			// dismissable dialog, not a 2.5s toast.
+			setMode({ kind: "error", message: (error as Error).message });
 		}
-		setMode({ kind: "browse" });
 	};
 
 	const onMove = async (targetStatus: string): Promise<void> => {
@@ -719,6 +724,15 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 					label="Attach file (path, or drag a file onto the terminal)"
 					onSubmit={(v) => void attachFile(attachTask, v)}
 					onCancel={() => setMode({ kind: "detail", task: attachTask })}
+				/>
+			);
+		}
+		if (mode.kind === "error") {
+			return (
+				<ErrorDialog
+					message={mode.message}
+					onClose={() => setMode({ kind: "browse" })}
+					width={Math.min(76, boardAreaWidth - 4)}
 				/>
 			);
 		}
