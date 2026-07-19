@@ -380,7 +380,7 @@ export function App(): JSX.Element {
 	];
 
 	return (
-		<div className="app">
+		<div className={`app${compact ? " compact" : ""}`}>
 			<div className="topbar">
 				<div className="brand">
 					<span className="brand-logo">O</span>
@@ -393,7 +393,10 @@ export function App(): JSX.Element {
 					</div>
 				) : null}
 				<div className="topbar-spacer" />
-				<div className="search" style={{ width: 320, height: 34 }}>
+				<div
+					className="search"
+					style={{ flex: "0 1 320px", minWidth: 110, height: 34 }}
+				>
 					<Icon.Search />
 					<input
 						id="topbar-search"

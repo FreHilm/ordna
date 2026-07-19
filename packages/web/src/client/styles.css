@@ -143,6 +143,10 @@ select {
 	height: 100vh;
 	display: grid;
 	grid-template-rows: 56px 1fr;
+	/* Same trap as .main's 1fr track: the implicit column must be
+	   allowed to shrink below its content's min-width, or a crowded
+	   topbar widens the whole (never-scrolling) page. */
+	grid-template-columns: minmax(0, 1fr);
 }
 
 /* ---------- Top bar ---------- */
@@ -153,6 +157,15 @@ select {
 	padding: 0 20px;
 	border-bottom: 1px solid var(--line);
 	background: var(--bg-1);
+	min-width: 0;
+}
+/* Narrow windows: drop the breadcrumb and keyboard hints so the search,
+   toggles, and New task always fit. */
+@media (max-width: 700px) {
+	.topbar .crumbs,
+	.topbar .kbd {
+		display: none;
+	}
 }
 
 .brand {
@@ -257,7 +270,10 @@ select {
 /* ---------- Main layout ---------- */
 .main {
 	display: grid;
-	grid-template-columns: 220px 1fr;
+	/* minmax(0, 1fr) — a bare 1fr track refuses to shrink below its
+	   content's min-content width, so a wide board would blow the page
+	   out horizontally instead of scrolling inside .board. */
+	grid-template-columns: 220px minmax(0, 1fr);
 	min-height: 0;
 	transition: grid-template-columns 0.28s ease;
 }
@@ -270,7 +286,7 @@ select {
    it as an overlay above the board. z-indexes stay below modals
    (100+) and toasts (55) so those still cover the panel. */
 .main.sidebar-foldable {
-	grid-template-columns: 0 1fr;
+	grid-template-columns: 0 minmax(0, 1fr);
 }
 
 /* A fixed-position sidebar is removed from grid auto-placement, so the
@@ -385,6 +401,10 @@ select {
 	width: 100%;
 	text-align: left;
 }
+/* Compact density tightens the sidebar rows too. */
+.app.compact .side-item {
+	padding: 3px 10px;
+}
 .side-item:hover {
 	background: var(--bg-2);
 	color: var(--text);
@@ -421,6 +441,9 @@ select {
 	display: flex;
 	flex-direction: column;
 	min-height: 0;
+	/* Grid items default to min-width auto — must be 0 for the board's
+	   own overflow-x to engage instead of widening the page. */
+	min-width: 0;
 }
 
 /* Board title: a floating pill in the bottom-right corner of the board
@@ -479,6 +502,10 @@ select {
 }
 .search input {
 	flex: 1;
+	/* Lets the search box shrink on narrow windows — without this the
+	   input's min-content width props the topbar (and the whole page,
+	   which never scrolls) wider than the viewport. */
+	min-width: 0;
 	margin-left: 8px;
 	font-size: 13.5px;
 }
@@ -540,7 +567,9 @@ select {
 
 .col {
 	flex: 1 1 0;
-	min-width: 120px;
+	/* Columns never squish below a usable card width — past that point
+	   the board's overflow-x takes over and scrolls horizontally. */
+	min-width: 260px;
 	display: flex;
 	flex-direction: column;
 	min-height: 0;
