@@ -50,17 +50,20 @@
 [data-theme="light"] {
 	color-scheme: light;
 
-	--bg: #f9f7f3;
-	--bg-1: #ffffff;
-	--bg-2: #f5f2ec;
-	--bg-3: #eae6de;
-	--bg-hover: #ede9e1;
-	--line: #e8e2d7;
-	--line-strong: #d2ccbe;
+	/* Deeper warm-greige layering so the page doesn't glare: the board
+	   canvas is the darkest plane, sidebar and topbar step up from it,
+	   and cards sit on top as soft off-white (never pure #fff). */
+	--bg: #eae4d9;
+	--bg-1: #faf8f4;
+	--bg-2: #f0ebe1;
+	--bg-3: #ddd5c6;
+	--bg-hover: #e4ddd0;
+	--line: #d8cfbd;
+	--line-strong: #bfb49d;
 	--text: #1c1b18;
-	--text-2: #56554f;
-	--text-3: #8a8880;
-	--text-4: #b8b5aa;
+	--text-2: #504e47;
+	--text-3: #807d73;
+	--text-4: #b3af9f;
 
 	--accent: #d97706;
 	--accent-2: #b45309;
@@ -80,6 +83,16 @@
 	--shadow-sm: 0 1px 2px rgba(60, 50, 20, 0.05);
 	--shadow: 0 4px 16px rgba(60, 50, 20, 0.08), 0 1px 3px rgba(60, 50, 20, 0.04);
 	--shadow-lg: 0 20px 50px rgba(60, 50, 20, 0.15), 0 6px 14px rgba(60, 50, 20, 0.07);
+}
+
+/* Light-mode plane stepping: sidebar and topbar get their own tints
+   between the board canvas (--bg) and the cards (--bg-1), so the
+   title bar, menu, board, and cards read as distinct layers. */
+[data-theme="light"] .sidebar {
+	background: #f1ece2;
+}
+[data-theme="light"] .topbar {
+	background: #f5f1e8;
 }
 
 * {
@@ -219,6 +232,11 @@ select {
 	font-weight: 500;
 	cursor: pointer;
 	transition: all 0.12s;
+	/* Buttons never wrap their label or get flex-squeezed — in tight
+	   layouts the designated shrinker (e.g. the topbar search) gives
+	   way instead. */
+	white-space: nowrap;
+	flex-shrink: 0;
 	color: var(--text-2);
 	background: transparent;
 }
