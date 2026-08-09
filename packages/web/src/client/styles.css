@@ -956,7 +956,10 @@ select {
 .card-action.agent {
 	color: var(--accent);
 	border-color: var(--accent-line);
-	background: var(--accent-soft);
+	/* Same tint as --accent-soft but OPAQUE (mixed over the card
+	   surface): these buttons overlay the title on hover, and a
+	   translucent fill lets the text underneath bleed through. */
+	background: color-mix(in srgb, var(--accent) 14%, var(--bg-1));
 }
 .card-action.agent:hover {
 	color: var(--accent-fg);

@@ -286,36 +286,87 @@ export async function runWeb(options: RunWebOptions = {}): Promise<RunWebHandle>
 }
 
 function setupPage(reason: string): string {
+	// The internal detection reason is developer-speak ("no storage
+	// signals found, but this is a git repo") — translate the known case
+	// into a welcome, and keep whatever it was as a small footnote.
+	const isFreshRepo = reason.includes("no storage signals");
+	const lede = isFreshRepo
+		? "This project isn\u2019t using Ordna yet \u2014 let\u2019s set it up. Pick where your tasks should live; you can change this later in <code>.ordna/config.yaml</code>."
+		: escapeHtml(reason);
+	const footnote = isFreshRepo
+		? "Detected: a git repository with no existing Ordna tasks."
+		: "";
 	return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Ordna setup</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Welcome to Ordna</title>
 <style>
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 640px; margin: 4rem auto; padding: 0 1.5rem; color: #1a1a1a; line-height: 1.5; }
-  h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
-  p.lede { color: #666; margin-top: 0; }
-  fieldset { border: 1px solid #ddd; border-radius: 6px; padding: 1rem 1.25rem; margin: 1.5rem 0; }
-  legend { font-weight: 600; padding: 0 0.5rem; }
-  label { display: block; padding: 0.5rem 0; cursor: pointer; }
-  label code { background: #f3f3f6; padding: 1px 6px; border-radius: 3px; font-size: 0.9rem; }
-  label small { display: block; color: #666; margin-left: 1.6rem; margin-top: 0.15rem; }
-  button { background: #2563eb; color: white; border: 0; padding: 0.6rem 1.2rem; border-radius: 6px; cursor: pointer; font-size: 1rem; }
-  button:hover { background: #1d4ed8; }
+  :root {
+    --bg: #f6f2ea; --card: #fffdf9; --line: #ddd5c6; --line-strong: #bfb49d;
+    --text: #1c1b18; --text-2: #504e47; --text-3: #807d73;
+    --accent: #d97706; --accent-2: #b45309; --accent-soft: rgba(217, 119, 6, 0.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141416; --card: #1c1c1f; --line: #2d2d33; --line-strong: #3a3a42;
+      --text: #ececee; --text-2: #a8a8b0; --text-3: #76767f;
+      --accent: #f59e0b; --accent-2: #fbbf24; --accent-soft: rgba(245, 158, 11, 0.1);
+    }
+  }
+  * { box-sizing: border-box; }
+  body { font-family: "Geist", "Inter", -apple-system, system-ui, sans-serif; background: var(--bg); color: var(--text); max-width: 620px; margin: 9vh auto 4rem; padding: 0 1.5rem; line-height: 1.55; }
+  .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 1.75rem; }
+  .brand-logo { width: 34px; height: 34px; border-radius: 9px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); display: inline-flex; align-items: center; justify-content: center; color: #141416; font-weight: 700; font-size: 18px; }
+  .brand-name { font-size: 20px; font-weight: 650; letter-spacing: -0.02em; }
+  h1 { font-size: 1.45rem; letter-spacing: -0.015em; margin: 0 0 0.4rem; }
+  p.lede { color: var(--text-2); margin: 0 0 1.6rem; }
+  p.lede code { background: var(--accent-soft); border-radius: 4px; padding: 1px 6px; font-size: 0.85em; }
+  .options { display: flex; flex-direction: column; gap: 10px; margin: 0 0 1.4rem; }
+  label.option { display: flex; gap: 12px; align-items: flex-start; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; cursor: pointer; transition: border-color 0.12s, background 0.12s; }
+  label.option:hover { border-color: var(--line-strong); }
+  label.option:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+  label.option input { margin-top: 4px; accent-color: var(--accent); }
+  .option-title { font-weight: 600; }
+  .option-title .tag { font-size: 11px; font-weight: 600; color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; padding: 1px 8px; margin-left: 8px; vertical-align: 1px; }
+  .option-desc { display: block; color: var(--text-2); font-size: 0.9rem; margin-top: 2px; }
+  button { background: var(--accent); color: #141416; border: 0; padding: 0.65rem 1.4rem; border-radius: 10px; cursor: pointer; font-size: 1rem; font-weight: 600; font-family: inherit; }
+  button:hover { background: var(--accent-2); }
+  p.footnote { color: var(--text-3); font-size: 0.8rem; margin-top: 1.6rem; }
 </style>
 </head>
 <body>
-<h1>Ordna setup</h1>
-<p class="lede">${escapeHtml(reason)}</p>
+<div class="brand"><span class="brand-logo">O</span><span class="brand-name">Ordna</span></div>
+<h1>Welcome!</h1>
+<p class="lede">${lede}</p>
 <form method="post" action="/api/setup-mode">
-  <fieldset>
-    <legend>Pick a storage mode</legend>
-    <label><input type="radio" name="storage" value="file" checked /> <code>file</code> <small>Tasks as markdown in <code>tasks/</code> (default, recommended)</small></label>
-    <label><input type="radio" name="storage" value="hybrid" /> <code>hybrid</code> <small>Tasks as files + synced ID allocator + audit log in git</small></label>
-    <label><input type="radio" name="storage" value="namespace" /> <code>namespace</code> <small>Tasks as git refs; working tree stays clean</small></label>
-  </fieldset>
-  <button type="submit">Save and continue</button>
+  <div class="options">
+    <label class="option">
+      <input type="radio" name="storage" value="file" checked />
+      <span>
+        <span class="option-title">Task files in your repo<span class="tag">Recommended</span></span>
+        <span class="option-desc">Tasks are plain markdown files in <code>tasks/</code> \u2014 readable, diffable, committed with your code. The simplest way to start.</span>
+      </span>
+    </label>
+    <label class="option">
+      <input type="radio" name="storage" value="hybrid" />
+      <span>
+        <span class="option-title">Task files + shared id counter</span>
+        <span class="option-desc">Same markdown files, plus a task-number counter synced through git \u2014 pick this when several machines or teammates create tasks in the same project.</span>
+      </span>
+    </label>
+    <label class="option">
+      <input type="radio" name="storage" value="namespace" />
+      <span>
+        <span class="option-title">Invisible (stored inside git)</span>
+        <span class="option-desc">Tasks live in git\u2019s own storage \u2014 no files in your working tree, no task commits in your history, syncs automatically. Best when the board shouldn\u2019t touch the repo\u2019s contents.</span>
+      </span>
+    </label>
+  </div>
+  <button type="submit">Start using Ordna</button>
 </form>
+${footnote ? `<p class="footnote">${footnote}</p>` : ""}
 </body>
 </html>`;
 }
@@ -328,18 +379,22 @@ function savedPage(mode: string): string {
 <title>Ordna ready</title>
 <meta http-equiv="refresh" content="1; url=/" />
 <style>
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 640px; margin: 4rem auto; padding: 0 1.5rem; color: #1a1a1a; line-height: 1.5; }
-  h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
-  .done { background: #dcfce7; border: 1px solid #86efac; padding: 1rem 1.25rem; border-radius: 6px; }
-  .done p { margin: 0.25rem 0; }
-  a { color: #2563eb; }
+  :root { --bg: #f6f2ea; --card: #fffdf9; --line: #ddd5c6; --text: #1c1b18; --text-2: #504e47; --accent: #d97706; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #141416; --card: #1c1c1f; --line: #2d2d33; --text: #ececee; --text-2: #a8a8b0; --accent: #f59e0b; }
+  }
+  body { font-family: "Geist", "Inter", -apple-system, system-ui, sans-serif; background: var(--bg); color: var(--text); max-width: 620px; margin: 12vh auto; padding: 0 1.5rem; line-height: 1.55; }
+  .done { background: var(--card); border: 1px solid var(--line); border-left: 3px solid var(--accent); padding: 1rem 1.25rem; border-radius: 12px; }
+  .done p { margin: 0.25rem 0; color: var(--text-2); }
+  .done p strong { color: var(--text); }
+  a { color: var(--accent); }
+  code { background: rgba(128,128,128,0.12); border-radius: 4px; padding: 1px 6px; font-size: 0.9em; }
 </style>
 </head>
 <body>
-<h1>Ordna setup</h1>
 <div class="done">
-  <p><strong>Storage mode set to <code>${escapeHtml(mode)}</code>.</strong></p>
-  <p>Loading the board… <a href="/">click here</a> if you're not redirected.</p>
+  <p><strong>All set \u2014 Storage mode set to <code>${escapeHtml(mode)}</code>.</strong></p>
+  <p>Loading your board\u2026 <a href="/">click here</a> if you\u2019re not redirected.</p>
 </div>
 </body>
 </html>`;
