@@ -118,32 +118,95 @@ export function App(): JSX.Element {
 		})();
 	}, []);
 
+	// Live updates over WebSocket — with reconnection and gap recovery.
+	// The socket dies silently all the time in practice (laptop sleep,
+	// backgrounded tabs, server restarts), and the server has no event
+	// replay, so recovery is two-part: reconnect with a short retry, and
+	// re-fetch the full list on every (re)open plus whenever the tab
+	// becomes visible or the network comes back. Without this the board
+	// silently freezes while still looking alive.
 	useEffect(() => {
-		const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-		const ws = new WebSocket(`${proto}//${window.location.host}/ws`);
-		ws.onmessage = (event) => {
-			const evt = JSON.parse(event.data) as WsEvent;
-			setTasks((prev) => {
-				if (evt.type === "removed") return prev.filter((t) => t.id !== evt.id);
-				if (evt.type === "renamed") {
-					// Drop the old-id entry and re-insert under newId.
-					const next = prev.filter((t) => t.id !== evt.oldId && t.id !== evt.newId);
-					next.push(evt.task);
-					return next;
-				}
-				const next = prev.filter((t) => t.id !== evt.task.id);
-				next.push(evt.task);
-				return next;
-			});
-			if (evt.type === "renamed") {
-				// If the user has the renamed task open, swap to its new id so
-				// the modal stays on the same content.
-				setOpenTaskId((cur) => (cur === evt.oldId ? evt.newId : cur));
-				setActiveId((cur) => (cur === evt.oldId ? evt.newId : cur));
-				showToast(`Renamed ${evt.oldId} → ${evt.newId}`);
+		let ws: WebSocket | null = null;
+		let disposed = false;
+		let retryTimer: number | null = null;
+
+		const resync = async (): Promise<void> => {
+			try {
+				const list = await api.list();
+				if (!disposed) setTasks(list);
+			} catch {
+				// Server unreachable right now — the reconnect loop keeps trying.
 			}
 		};
-		return () => ws.close();
+
+		const connect = (): void => {
+			if (disposed) return;
+			const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+			ws = new WebSocket(`${proto}//${window.location.host}/ws`);
+			ws.onopen = () => {
+				// Catch up on anything that happened while disconnected.
+				void resync();
+			};
+			ws.onmessage = (event) => {
+				const evt = JSON.parse(event.data) as WsEvent;
+				setTasks((prev) => {
+					if (evt.type === "removed") return prev.filter((t) => t.id !== evt.id);
+					if (evt.type === "renamed") {
+						// Drop the old-id entry and re-insert under newId.
+						const next = prev.filter((t) => t.id !== evt.oldId && t.id !== evt.newId);
+						next.push(evt.task);
+						return next;
+					}
+					const next = prev.filter((t) => t.id !== evt.task.id);
+					next.push(evt.task);
+					return next;
+				});
+				if (evt.type === "renamed") {
+					// If the user has the renamed task open, swap to its new id so
+					// the modal stays on the same content.
+					setOpenTaskId((cur) => (cur === evt.oldId ? evt.newId : cur));
+					setActiveId((cur) => (cur === evt.oldId ? evt.newId : cur));
+					showToast(`Renamed ${evt.oldId} → ${evt.newId}`);
+				}
+			};
+			ws.onclose = () => {
+				if (disposed) return;
+				retryTimer = window.setTimeout(connect, 1500);
+			};
+		};
+		connect();
+
+		// A sleeping tab's socket often dies without a close event firing
+		// until much later — when the user comes back (or the network
+		// returns), resync immediately and revive the socket if needed.
+		const ensureLive = (): void => {
+			if (disposed) return;
+			if (ws && ws.readyState === WebSocket.OPEN) {
+				void resync();
+				return;
+			}
+			if (ws && ws.readyState === WebSocket.CONNECTING) return;
+			if (retryTimer !== null) {
+				window.clearTimeout(retryTimer);
+				retryTimer = null;
+			}
+			connect(); // onopen resyncs
+		};
+		const onVisible = (): void => {
+			if (document.visibilityState === "visible") ensureLive();
+		};
+		document.addEventListener("visibilitychange", onVisible);
+		window.addEventListener("online", ensureLive);
+		window.addEventListener("focus", onVisible);
+
+		return () => {
+			disposed = true;
+			if (retryTimer !== null) window.clearTimeout(retryTimer);
+			document.removeEventListener("visibilitychange", onVisible);
+			window.removeEventListener("online", ensureLive);
+			window.removeEventListener("focus", onVisible);
+			ws?.close();
+		};
 	}, [showToast]);
 
 	const statuses = config?.statuses ?? ["todo", "doing", "done"];
