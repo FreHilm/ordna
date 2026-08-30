@@ -3,15 +3,17 @@ import {
 	type OrdnaConfig,
 	type Priority,
 	type Section,
+	type StoreContext,
 	type Task,
 	updateTask as updateTaskCore,
-	type StoreContext,
 } from "@frehilm/ordna-core";
 import { Box, Text, useInput } from "ink";
-import React, { useEffect, useMemo, useState } from "react";
-import { useRawBackspaceDelete } from "./hooks.js";
+import type React from "react";
+import { useEffect, useMemo, useState } from "react";
 import { LineInput } from "./LineInput.js";
+import { useRawBackspaceDelete } from "./hooks.js";
 import { colorForStatus, tagColor, theme } from "./theme.js";
+import { stringToTokens, tokensToString } from "./tokens.js";
 
 interface Props {
 	task: Task;
@@ -70,15 +72,36 @@ function buildFields(draft: Draft): FieldKind[] {
 	return fields;
 }
 
-function tokensToString(tokens: string[]): string {
-	return tokens.join(", ");
-}
-
-function stringToTokens(value: string): string[] {
-	return value
-		.split(/[,\s]+/)
-		.map((t) => t.trim())
-		.filter((t) => t.length > 0);
+/**
+ * Token-list editor on top of LineInput. Owns the RAW text while the
+ * field is being edited — the parent only sees parsed tokens. Binding
+ * LineInput's value straight to tokensToString(tokens) ate separators
+ * as you typed them (",", ";", space were normalized away on the very
+ * next render), which made entering more than one tag impossible.
+ */
+function TokenLineInput({
+	tokens,
+	onTokens,
+	onDone,
+	placeholder,
+}: {
+	tokens: string[];
+	onTokens: (next: string[]) => void;
+	onDone: () => void;
+	placeholder: string;
+}): React.JSX.Element {
+	const [text, setText] = useState(() => tokensToString(tokens));
+	return (
+		<LineInput
+			value={text}
+			onChange={(v) => {
+				setText(v);
+				onTokens(stringToTokens(v));
+			}}
+			onSubmit={onDone}
+			placeholder={placeholder}
+		/>
+	);
 }
 
 function statusOptions(config: OrdnaConfig): string[] {
@@ -154,8 +177,7 @@ function wrapText(text: string, width: number): string[] {
 function sectionHeight(content: string, innerWidth: number): number {
 	// 1 marginTop + 1 heading + content lines (paddingLeft=2)
 	const contentWidth = Math.max(1, innerWidth - 2);
-	const contentLines =
-		content.length === 0 ? 1 : wrapText(content, contentWidth).length;
+	const contentLines = content.length === 0 ? 1 : wrapText(content, contentWidth).length;
 	return 1 + 1 + contentLines;
 }
 
@@ -273,9 +295,7 @@ export function TaskEditor({
 	// just-computed layout.
 	useEffect(() => {
 		if (focused?.kind !== "section") return;
-		const sectionIdx = renderableSections.findIndex(
-			(e) => e.index === focused.index,
-		);
+		const sectionIdx = renderableSections.findIndex((e) => e.index === focused.index);
 		if (sectionIdx === -1) return;
 		if (sectionIdx < sectionLayout.start) {
 			setSectionScrollIdx(sectionIdx);
@@ -302,13 +322,7 @@ export function TaskEditor({
 			}
 			setSectionScrollIdx(newStart);
 		}
-	}, [
-		focused,
-		renderableSections,
-		sectionLayout,
-		sectionsAreaHeight,
-		innerWidth,
-	]);
+	}, [focused, renderableSections, sectionLayout, sectionsAreaHeight, innerWidth]);
 
 	useEffect(() => {
 		if (!editing) return;
@@ -329,22 +343,17 @@ export function TaskEditor({
 		!confirmExit &&
 		!saving &&
 		draft.sections[focused.index] !== undefined;
-	const sectionIdx =
-		focused?.kind === "section" ? focused.index : -1;
+	const sectionIdx = focused?.kind === "section" ? focused.index : -1;
 	useRawBackspaceDelete(
 		() => {
 			if (sectionIdx < 0) return;
 			const section = draft.sections[sectionIdx];
 			if (!section) return;
 			if (cursor === 0) return;
-			const next =
-				section.content.slice(0, cursor - 1) +
-				section.content.slice(cursor);
+			const next = section.content.slice(0, cursor - 1) + section.content.slice(cursor);
 			setDraft((d) => ({
 				...d,
-				sections: d.sections.map((s, i) =>
-					i === sectionIdx ? { ...s, content: next } : s,
-				),
+				sections: d.sections.map((s, i) => (i === sectionIdx ? { ...s, content: next } : s)),
 			}));
 			setCursor(cursor - 1);
 		},
@@ -353,14 +362,10 @@ export function TaskEditor({
 			const section = draft.sections[sectionIdx];
 			if (!section) return;
 			if (cursor >= section.content.length) return;
-			const next =
-				section.content.slice(0, cursor) +
-				section.content.slice(cursor + 1);
+			const next = section.content.slice(0, cursor) + section.content.slice(cursor + 1);
 			setDraft((d) => ({
 				...d,
-				sections: d.sections.map((s, i) =>
-					i === sectionIdx ? { ...s, content: next } : s,
-				),
+				sections: d.sections.map((s, i) => (i === sectionIdx ? { ...s, content: next } : s)),
 			}));
 			// Cursor stays put.
 		},
@@ -473,9 +478,7 @@ export function TaskEditor({
 					const clamped = Math.max(0, Math.min(next.length, nextCursor));
 					setDraft((d) => ({
 						...d,
-						sections: d.sections.map((s, i) =>
-							i === idx ? { ...s, content: next } : s,
-						),
+						sections: d.sections.map((s, i) => (i === idx ? { ...s, content: next } : s)),
 					}));
 					setCursor(clamped);
 				};
@@ -588,8 +591,7 @@ export function TaskEditor({
 		const isFocused =
 			focused !== undefined &&
 			focused.kind === field.kind &&
-			(field.kind !== "section" ||
-				(focused.kind === "section" && focused.index === field.index));
+			(field.kind !== "section" || (focused.kind === "section" && focused.index === field.index));
 		const isEditing = isFocused && editing;
 		const marker = isEditing ? "▷" : isFocused ? "▶" : " ";
 		const labelColor = isFocused ? theme.accent : theme.textDim;
@@ -617,8 +619,7 @@ export function TaskEditor({
 		const isFocused =
 			focused !== undefined &&
 			focused.kind === field.kind &&
-			(field.kind !== "section" ||
-				(focused.kind === "section" && focused.index === field.index));
+			(field.kind !== "section" || (focused.kind === "section" && focused.index === field.index));
 		const isEditing = isFocused && editing;
 		if (isEditing) {
 			return (
@@ -630,7 +631,7 @@ export function TaskEditor({
 				/>
 			);
 		}
-		const display = value.length === 0 ? placeholder ?? "—" : value;
+		const display = value.length === 0 ? (placeholder ?? "—") : value;
 		const dim = value.length === 0;
 		return (
 			<Text
@@ -647,8 +648,7 @@ export function TaskEditor({
 		display: string,
 		color?: string,
 	): React.ReactNode => {
-		const isFocused =
-			focused !== undefined && focused.kind === field.kind;
+		const isFocused = focused !== undefined && focused.kind === field.kind;
 		const isEditing = isFocused && editing;
 		const arrow = isEditing ? " ↑↓" : "";
 		const valueColor = color ?? (isFocused ? theme.text : theme.textDim);
@@ -665,11 +665,11 @@ export function TaskEditor({
 		const isEditing = isFocused && editing;
 		if (isEditing) {
 			return (
-				<LineInput
-					value={tokensToString(draft.tags)}
-					onChange={(v) => setDraft((d) => ({ ...d, tags: stringToTokens(v) }))}
-					onSubmit={() => setEditing(false)}
-					placeholder="comma or space separated"
+				<TokenLineInput
+					tokens={draft.tags}
+					onTokens={(next) => setDraft((d) => ({ ...d, tags: next }))}
+					onDone={() => setEditing(false)}
+					placeholder="separate with comma, semicolon or space"
 				/>
 			);
 		}
@@ -693,12 +693,10 @@ export function TaskEditor({
 		const isEditing = isFocused && editing;
 		if (isEditing) {
 			return (
-				<LineInput
-					value={tokensToString(draft.depends_on)}
-					onChange={(v) =>
-						setDraft((d) => ({ ...d, depends_on: stringToTokens(v) }))
-					}
-					onSubmit={() => setEditing(false)}
+				<TokenLineInput
+					tokens={draft.depends_on}
+					onTokens={(next) => setDraft((d) => ({ ...d, depends_on: next }))}
+					onDone={() => setEditing(false)}
 					placeholder="e.g. T-001, T-002"
 				/>
 			);
@@ -715,8 +713,7 @@ export function TaskEditor({
 
 	const renderSection = (idx: number, section: Section): React.JSX.Element => {
 		const field: FieldKind = { kind: "section", index: idx };
-		const isFocused =
-			focused?.kind === "section" && focused.index === idx;
+		const isFocused = focused?.kind === "section" && focused.index === idx;
 		const isEditing = isFocused && editing;
 		const marker = isEditing ? "▷" : isFocused ? "▶" : " ";
 		return (
@@ -728,9 +725,7 @@ export function TaskEditor({
 			>
 				<Box>
 					<Box width={2}>
-						<Text color={isFocused ? theme.accent : theme.textFaint}>
-							{marker}
-						</Text>
+						<Text color={isFocused ? theme.accent : theme.textFaint}>{marker}</Text>
 					</Box>
 					<Text color={isFocused ? theme.accent : theme.textDim} bold>
 						{section.heading}
@@ -738,18 +733,11 @@ export function TaskEditor({
 				</Box>
 				<Box paddingLeft={2} width={innerWidth}>
 					{isEditing ? (
-						<MultilineEditor
-							value={section.content}
-							cursor={cursor}
-							width={innerWidth - 2}
-						/>
+						<MultilineEditor value={section.content} cursor={cursor} width={innerWidth - 2} />
 					) : section.content.length === 0 ? (
 						<Text color={theme.textFaint}>—</Text>
 					) : (
-						<Text
-							color={isFocused ? theme.text : theme.textDim}
-							wrap="wrap"
-						>
+						<Text color={isFocused ? theme.text : theme.textDim} wrap="wrap">
 							{section.content}
 						</Text>
 					)}
@@ -759,9 +747,7 @@ export function TaskEditor({
 	};
 
 	const statusColor = colorForStatus(draft.status);
-	const priorityColor = draft.priority
-		? theme.priority[draft.priority]
-		: theme.textFaint;
+	const priorityColor = draft.priority ? theme.priority[draft.priority] : theme.textFaint;
 
 	return (
 		<Box
@@ -779,9 +765,7 @@ export function TaskEditor({
 					{task.id}
 				</Text>
 				<Text color={theme.textMuted}>{"  edit"}</Text>
-				{saving ? (
-					<Text color={theme.textMuted}>{"  · saving…"}</Text>
-				) : null}
+				{saving ? <Text color={theme.textMuted}>{"  · saving…"}</Text> : null}
 				{dirty && !confirmExit && !saving ? (
 					<Text color={theme.accent2}>{"  · unsaved"}</Text>
 				) : null}
@@ -834,78 +818,72 @@ export function TaskEditor({
 					</Box>
 				</Box>
 			) : (
-			<>
-			<Box marginTop={1} flexDirection="column">
-				{renderRow(
-					"Title",
-					{ kind: "title" },
-					renderTextValue(
-						{ kind: "title" },
-						draft.title,
-						(v) => setDraft((d) => ({ ...d, title: v })),
-					),
-				)}
-				{renderRow(
-					"Status",
-					{ kind: "status" },
-					renderSelectValue({ kind: "status" }, draft.status, statusColor),
-				)}
-				{renderRow(
-					"Priority",
-					{ kind: "priority" },
-					renderSelectValue(
-						{ kind: "priority" },
-						priorityLabel(draft.priority),
-						priorityColor,
-					),
-				)}
-				{renderRow(
-					"Assignee",
-					{ kind: "assignee" },
-					renderTextValue(
-						{ kind: "assignee" },
-						draft.assignee,
-						(v) => setDraft((d) => ({ ...d, assignee: v })),
-						"unassigned",
-					),
-				)}
-				{renderRow("Tags", { kind: "tags" }, renderTags())}
-				{renderRow("Depends", { kind: "depends_on" }, renderDependsOn())}
-			</Box>
+				<>
+					<Box marginTop={1} flexDirection="column">
+						{renderRow(
+							"Title",
+							{ kind: "title" },
+							renderTextValue({ kind: "title" }, draft.title, (v) =>
+								setDraft((d) => ({ ...d, title: v })),
+							),
+						)}
+						{renderRow(
+							"Status",
+							{ kind: "status" },
+							renderSelectValue({ kind: "status" }, draft.status, statusColor),
+						)}
+						{renderRow(
+							"Priority",
+							{ kind: "priority" },
+							renderSelectValue({ kind: "priority" }, priorityLabel(draft.priority), priorityColor),
+						)}
+						{renderRow(
+							"Assignee",
+							{ kind: "assignee" },
+							renderTextValue(
+								{ kind: "assignee" },
+								draft.assignee,
+								(v) => setDraft((d) => ({ ...d, assignee: v })),
+								"unassigned",
+							),
+						)}
+						{renderRow("Tags", { kind: "tags" }, renderTags())}
+						{renderRow("Depends", { kind: "depends_on" }, renderDependsOn())}
+					</Box>
 
-			<Box
-				flexDirection="column"
-				width={innerWidth}
-				height={sectionsAreaHeight}
-				overflowY="hidden"
-			>
-				{sectionLayout.aboveCount > 0 ? (
-					<Text color={theme.textMuted} italic wrap="truncate-end">
-						↑ {sectionLayout.aboveCount} more
-					</Text>
-				) : null}
-				{renderableSections
-					.slice(sectionLayout.start, sectionLayout.end)
-					.map((entry) => renderSection(entry.index, entry.section))}
-				{sectionLayout.belowCount > 0 ? (
-					<Text color={theme.textMuted} italic wrap="truncate-end">
-						↓ {sectionLayout.belowCount} more
-					</Text>
-				) : null}
-			</Box>
+					<Box
+						flexDirection="column"
+						width={innerWidth}
+						height={sectionsAreaHeight}
+						overflowY="hidden"
+					>
+						{sectionLayout.aboveCount > 0 ? (
+							<Text color={theme.textMuted} italic wrap="truncate-end">
+								↑ {sectionLayout.aboveCount} more
+							</Text>
+						) : null}
+						{renderableSections
+							.slice(sectionLayout.start, sectionLayout.end)
+							.map((entry) => renderSection(entry.index, entry.section))}
+						{sectionLayout.belowCount > 0 ? (
+							<Text color={theme.textMuted} italic wrap="truncate-end">
+								↓ {sectionLayout.belowCount} more
+							</Text>
+						) : null}
+					</Box>
 
-			<Box marginTop={1}>
-				<Text color={theme.textMuted} italic>
-					{editing
-						? focused?.kind === "section"
-							? "←/→/↑/↓ move · Ctrl+←/→ word · Ctrl+A/E line · Esc back · Ctrl+S save"
-							: focused?.kind === "status" || focused?.kind === "priority"
-								? "↑/↓ change · Enter/Esc back · Ctrl+S save"
-								: "Enter confirm · Esc back · Ctrl+S save"
-						: "Tab field · Enter edit · Ctrl+S save · Esc cancel"}
-				</Text>
-			</Box>
-			</>
+					<Box marginTop={1}>
+						<Text color={theme.textMuted} italic>
+							{editing
+								? focused?.kind === "section"
+									? "←/→/↑/↓ move · Ctrl+←/→ word · Ctrl+A/E line · Esc back · Ctrl+S save"
+									: focused?.kind === "status" || focused?.kind === "priority"
+										? "↑/↓ change · Enter/Esc back · Ctrl+S save"
+										: "Enter confirm · Esc back · Ctrl+S save"
+								: "Tab field · Enter edit · Ctrl+S save · Esc cancel"}
+						</Text>
+					</Box>
+				</>
 			)}
 		</Box>
 	);
