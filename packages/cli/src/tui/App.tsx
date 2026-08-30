@@ -73,7 +73,7 @@ function groupByStatus(tasks: Task[], statuses: string[]): Map<string, Task[]> {
 }
 
 function flattenSidebarRows(rows: ReturnType<typeof buildSidebarRows>): SidebarRow[] {
-	return [...rows.views, ...rows.priorities, ...rows.tags];
+	return [...rows.views, ...rows.priorities, ...rows.assignees, ...rows.tags];
 }
 
 // Insert-or-replace a task in the sorted list. If the task is already present
@@ -91,6 +91,15 @@ function mergeTask(prev: Task[], task: Task): Task[] {
 	const next = prev.slice();
 	next[idx] = task;
 	return next;
+}
+
+function matchesSearch(task: Task, q: string): boolean {
+	if (!q) return true;
+	return (
+		task.title.toLowerCase().includes(q) ||
+		task.id.toLowerCase().includes(q) ||
+		task.tags.some((tag) => tag.toLowerCase().includes(q))
+	);
 }
 
 function removeTaskByPath(prev: Task[], filePath: string): Task[] {
@@ -198,15 +207,7 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 
 	const filteredTasks = useMemo<Task[]>(() => {
 		const q = searchQuery.toLowerCase();
-		return tasks.filter((t) => {
-			if (!matchesFilter(t, filter)) return false;
-			if (!q) return true;
-			return (
-				t.title.toLowerCase().includes(q) ||
-				t.id.toLowerCase().includes(q) ||
-				t.tags.some((tag) => tag.toLowerCase().includes(q))
-			);
-		});
+		return tasks.filter((t) => matchesFilter(t, filter) && matchesSearch(t, q));
 	}, [tasks, filter, searchQuery]);
 
 	const groups = useMemo(
@@ -391,8 +392,22 @@ export function App({ agentHook: agentHookProp }: AppProps = {}): React.JSX.Elem
 		if (sidebarFocusedKey === null) return;
 		const row = flatRows.find((r) => rowKey(r.item) === sidebarFocusedKey);
 		if (row) {
-			setFilter(row.item);
-			setColumnIndex(0);
+			const next = row.item;
+			setFilter(next);
+			// Land the cursor on the first column that has tasks under the
+			// new filter — blindly picking column 0 left NO visible
+			// selection when that column was empty (e.g. filtering on a
+			// person whose tasks are all in done), and the board felt dead.
+			const q = searchQuery.toLowerCase();
+			const matching = tasks.filter((t) => matchesFilter(t, next) && matchesSearch(t, q));
+			const nextStatuses =
+				next.kind === "archived"
+					? [ARCHIVED_STATUS]
+					: next.kind === "status"
+						? [next.status]
+						: statuses;
+			const firstCol = nextStatuses.findIndex((st) => matching.some((t) => t.status === st));
+			setColumnIndex(Math.max(0, firstCol));
 			setRowIndex(0);
 			if (sidebarPeek) setSidebarPeek(false);
 			setFocus("board");

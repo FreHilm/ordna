@@ -18,7 +18,7 @@ import { ConfirmDialog } from "./ConfirmDialog.js";
 import { CreateModal } from "./CreateModal.js";
 import { TaskModal } from "./TaskModal.js";
 import { api } from "./api.js";
-import { Icon } from "./icons.js";
+import { Avatar, Icon } from "./icons.js";
 
 type Theme = "dark" | "light";
 type View =
@@ -86,6 +86,8 @@ export function App(): JSX.Element {
 	const [density, setDensity] = useState<Density>(loadDensity);
 	const [view, setView] = useState<View>({ kind: "all" });
 	const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>(null);
+	// Assignee filter: a name, "" for unassigned, or null (off).
+	const [assigneeFilter, setAssigneeFilter] = useState<string | null>(null);
 	const [paletteOpen, setPaletteOpen] = useState(false);
 	const [cheatOpen, setCheatOpen] = useState(false);
 	const [isFetching, setIsFetching] = useState(false);
@@ -346,6 +348,7 @@ export function App(): JSX.Element {
 				if (view.kind === "tag" && !t.tags.includes(view.tag)) return false;
 			}
 			if (priorityFilter && t.priority !== priorityFilter) return false;
+			if (assigneeFilter !== null && (t.assignee ?? "") !== assigneeFilter) return false;
 			if (!q) return true;
 			return (
 				t.title.toLowerCase().includes(q) ||
@@ -353,10 +356,24 @@ export function App(): JSX.Element {
 				t.tags.some((tag) => tag.toLowerCase().includes(q))
 			);
 		});
-	}, [tasks, view, priorityFilter, query]);
+	}, [tasks, view, priorityFilter, assigneeFilter, query]);
 
 	const boardStatuses = view.kind === "archived" ? [ARCHIVED_STATUS] : statuses;
 	const groups = useMemo(() => groupBy(filtered, boardStatuses), [filtered, boardStatuses]);
+	const assigneeList = useMemo(() => {
+		const counts = new Map<string, number>();
+		for (const t of tasks) {
+			if (t.status === ARCHIVED_STATUS) continue;
+			const key = t.assignee ?? "";
+			counts.set(key, (counts.get(key) ?? 0) + 1);
+		}
+		// Named assignees by count; "unassigned" ("" key) always last.
+		const named = [...counts.entries()].filter(([n]) => n !== "").sort((a, b) => b[1] - a[1]);
+		const unassigned = counts.get("");
+		if (unassigned) named.push(["", unassigned]);
+		return named;
+	}, [tasks]);
+
 	const tagList = useMemo(() => {
 		const counts = new Map<string, number>();
 		for (const t of tasks) for (const tag of t.tags) counts.set(tag, (counts.get(tag) ?? 0) + 1);
@@ -600,6 +617,24 @@ export function App(): JSX.Element {
 							<span className="count">{tasks.filter((t) => t.priority === p).length}</span>
 						</button>
 					))}
+					{assigneeList.length > 0 ? (
+						<>
+							<div className="side-divider" />
+							<div className="side-head">People</div>
+							{assigneeList.map(([name, count]) => (
+								<button
+									key={name || "<unassigned>"}
+									type="button"
+									className={`side-item ${assigneeFilter === name ? "active" : ""}`}
+									onClick={() => setAssigneeFilter((cur) => (cur === name ? null : name))}
+								>
+									<Avatar name={name || null} size={16} />
+									{name || "unassigned"}
+									<span className="count">{count}</span>
+								</button>
+							))}
+						</>
+					) : null}
 					{tagList.length > 0 ? (
 						<>
 							<div className="side-divider" />
@@ -638,6 +673,12 @@ export function App(): JSX.Element {
 						{priorityFilter ? (
 							<button type="button" className="pill active" onClick={() => setPriorityFilter(null)}>
 								<span className={`prio-dot ${priorityFilter}`} /> {priorityFilter}
+								<Icon.X />
+							</button>
+						) : null}
+						{assigneeFilter !== null ? (
+							<button type="button" className="pill active" onClick={() => setAssigneeFilter(null)}>
+								<Avatar name={assigneeFilter || null} size={14} /> {assigneeFilter || "unassigned"}
 								<Icon.X />
 							</button>
 						) : null}

@@ -15,6 +15,8 @@ function filterLabel(filter: SidebarItem): string {
 			return `priority: ${filter.value}`;
 		case "tag":
 			return `#${filter.tag}`;
+		case "assignee":
+			return filter.name ? `@${filter.name}` : "unassigned";
 	}
 }
 
@@ -32,9 +34,7 @@ function SubbarImpl({ filter, visible, total, searchQuery }: Props): React.JSX.E
 				{filterLabel(filter)}
 			</Text>
 			<Text color={theme.textMuted}>{`  · ${visible} visible · ${total} total`}</Text>
-			{searchQuery ? (
-				<Text color={theme.accent}>{`  · /${searchQuery}`}</Text>
-			) : null}
+			{searchQuery ? <Text color={theme.accent}>{`  · /${searchQuery}`}</Text> : null}
 		</Box>
 	);
 }
